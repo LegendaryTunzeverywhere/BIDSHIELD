@@ -1,0 +1,46 @@
+# zebrad Regtest config for the Bidshield spike (template; e2e/spike.mjs renders
+# regtest/zebrad.generated.toml by replacing tmBsTi2xWTjUdEXnuTceL7fecEQKeWaPDJd with the funder's
+# offline-derived transparent address - mine from genesis, no miner-swap restart).
+#
+# Activation heights MUST match zecd's baked-in network::regtest heights
+# (NU5/NU6 at 1, NU6.1/NU6.2 at 4, NU6.3 at 8), or wallet and node consensus diverge.
+
+[network]
+network = "Regtest"
+listen_addr = "0.0.0.0:8233"
+
+[network.testnet_parameters]
+disable_pow = true
+
+[network.testnet_parameters.activation_heights]
+NU5 = 1
+NU6 = 1
+"NU6.1" = 4
+"NU6.2" = 4
+"NU6.3" = 8
+
+# Deferred (lockbox) funding stream so the pool has something to disburse at NU6.1.
+[[network.testnet_parameters.funding_streams]]
+[network.testnet_parameters.funding_streams.height_range]
+start = 1
+end = 1_000_000
+[[network.testnet_parameters.funding_streams.recipients]]
+receiver = "Deferred"
+numerator = 12
+addresses = []
+
+# ZIP-271 one-time disbursement paid at the NU6.1 activation block (token amount).
+[[network.testnet_parameters.lockbox_disbursements]]
+address = "t27eWDgjFYJGVXmzrXeVjnb5J3uXDM9xH9v"
+amount = 1
+
+[mining]
+miner_address = "tmBsTi2xWTjUdEXnuTceL7fecEQKeWaPDJd"
+
+[state]
+ephemeral = false
+cache_dir = "/var/cache/zebra"
+
+[rpc]
+listen_addr = "0.0.0.0:18234"
+enable_cookie_auth = false
