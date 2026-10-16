@@ -1,0 +1,16 @@
+# zebrad Mainnet config for Bidshield's third profile: real Zcash mainnet.
+# OPT-IN ONLY — a full initial sync needs tens of GB of disk and days of
+# wall-clock time. Start with: docker compose --profile mainnet up -d
+# (after enabling the NETWORK_MAINNET_* lines in .env).
+
+[network]
+network = "Mainnet"
+listen_addr = "0.0.0.0:8233"
+
+[state]
+ephemeral = false
+cache_dir = "/var/cache/zebra"
+
+[rpc]
+listen_addr = "0.0.0.0:18234"
+enable_cookie_auth = false

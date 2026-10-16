@@ -1,0 +1,225 @@
+# Bidshield stack: zebra (Regtest) -> funder zecd + auctioneer zecd -> api + web.
+# zecd talks straight to zebra's JSON-RPC (no lightwalletd). Wallet init is
+# orchestrated by e2e/spike.mjs (`docker compose run ... init`) before the daemons
+# start, mirroring the upstream zecd deploy compose. The api serves the built SPA
+# from web/dist and restarts until the auctioneer wallet answers.
+name: bidshield
+
+services:
+  zebra:
+    image: zfnd/zebra:6.3.0
+    command: ["zebrad", "-c", "/etc/zebra/zebrad.toml", "start"]
+    environment:
+      # entrypoint.sh drops to uid 10001 and chowns only $ZEBRA_STATE__CACHE_DIR;
+      # without this it chowns $HOME/.cache/zebra while zebrad writes /var/cache/zebra.
+      - ZEBRA_STATE__CACHE_DIR=/var/cache/zebra
+    volumes:
+      - ./regtest/zebrad.generated.toml:/etc/zebra/zebrad.toml:ro
+      - zebra-state:/var/cache/zebra
+    ports:
+      - "127.0.0.1:18234:18234"   # JSON-RPC (regtest)
+
+  funder:
+    build: ./docker/zecd
+    depends_on:
+      - zebra
+    command: ["--datadir", "/var/lib/zecd", "--conf=/etc/zecd/zecd.toml"]
+    environment:
+      - RUST_LOG=info
+      # MUST match zebra's "NU6.3" activation height (see regtest/zebrad.toml.tmpl).
+      # Unset = "no NU6.3 on regtest" in zecd's baked schedule -> it cannot parse the
+      # activation block ("sync error: parsing block 8").
+      - ZECD_REGTEST_NU63_HEIGHT=8
+    volumes:
+      - ./regtest/zecd.funder.toml:/etc/zecd/zecd.toml:ro
+      - funder-data:/var/lib/zecd
+    ports:
+      - "127.0.0.1:18242:18242"   # JSON-RPC
+      - "127.0.0.1:9243:9243"     # health: /healthz /readyz /status
+
+  auctioneer:
+    build: ./docker/zecd
+    depends_on:
+      - zebra
+    command: ["--datadir", "/var/lib/zecd", "--conf=/etc/zecd/zecd.toml"]
+    environment:
+      - RUST_LOG=info
+      - ZECD_REGTEST_NU63_HEIGHT=8
+    volumes:
+      - ./regtest/zecd.auctioneer.toml:/etc/zecd/zecd.toml:ro
+      - auctioneer-data:/var/lib/zecd
+    ports:
+      - "127.0.0.1:18232:18232"   # JSON-RPC
+      - "127.0.0.1:9233:9233"     # health: /healthz /readyz /status
+
+  # Testnet profile — opt-in only, LIGHT MODE (no local full node). Start with:
+  # docker compose --profile testnet up -d after enabling the NETWORK_TESTNET_*
+  # lines in .env, then init the wallet (see .env.example). zecd v0.9.0-rc1
+  # (NU7-era) dials the zec.rocks public lightwalletd via the `"zecrocks"` alias
+  # in testnet/zecd.auctioneer.toml — so there is no zebra-testnet container and
+  # no multi-day IBD (public testnet activated NU7 on 2026-10-04 at height
+  # 4,465,026, past which Zebra 6.3.0 halts anyway). The api's chain-sync probe
+  # answers through NETWORK_TESTNET_ZEBRA_URL (any public zebra JSON-RPC, e.g. a
+  # QuickNode/GetBlock endpoint); it is independent of zecd's lightwalletd
+  # backend. Prefer running your own node? See the testnet-fullnode profile.
+  auctioneer-testnet:
+    profiles: ["testnet"]
+    build:
+      context: ./docker/zecd
+      args:
+        ZECD_BIN: zecd-0.9.0-rc1
+    command: ["--datadir", "/var/lib/zecd", "--conf=/etc/zecd/zecd.toml"]
+    environment:
+      - RUST_LOG=info
+    volumes:
+      - ./testnet/zecd.auctioneer.toml:/etc/zecd/zecd.toml:ro
+      - auctioneer-testnet-data:/var/lib/zecd
+    ports:
+      - "127.0.0.1:18252:18232"   # JSON-RPC
+      - "127.0.0.1:9253:9233"     # health: /healthz /readyz /status
+
+  # Scripted bidder wallet for testnet (light mode, same rc binary). Fund from
+  # the Valar faucet or an external TESTNET wallet; bids go out via z_sendmany with
+  # the product's `bid:<uuid>` memo — the exact path e2e/ uses on regtest.
+  funder-testnet:
+    profiles: ["testnet"]
+    build:
+      context: ./docker/zecd
+      args:
+        ZECD_BIN: zecd-0.9.0-rc1
+    command: ["--datadir", "/var/lib/zecd", "--conf=/etc/zecd/zecd.toml"]
+    environment:
+      - RUST_LOG=info
+    volumes:
+      - ./testnet/zecd.funder.toml:/etc/zecd/zecd.toml:ro
+      - funder-testnet-data:/var/lib/zecd
+    ports:
+      - "127.0.0.1:18262:18232"   # JSON-RPC
+      - "127.0.0.1:9263:9233"     # health: /healthz /readyz /status
+
+  # Optional full-node testnet: your own zebra (needs a NU7-capable tag,
+  # 7.0.0-rc.0+, and a multi-day sync from genesis). To use it, point
+  # [backend] server in testnet/zecd.auctioneer.toml at
+  # "zebra://zebra-testnet:18234" and swap auctioneer-testnet's build arg back
+  # to the default ZECD_BIN. Never started by the testnet profile.
+  zebra-testnet:
+    profiles: ["testnet-fullnode"]
+    image: zfnd/zebra:6.3.0
+    command: ["zebrad", "-c", "/etc/zebra/zebrad.toml", "start"]
+    environment:
+      - ZEBRA_STATE__CACHE_DIR=/var/cache/zebra
+    volumes:
+      - ./testnet/zebrad.toml:/etc/zebra/zebrad.toml:ro
+      - zebra-testnet-state:/var/cache/zebra
+    ports:
+      - "127.0.0.1:18254:18234"   # JSON-RPC (testnet, debug)
+
+  # Mainnet pair — opt-in only (needs tens of GB of disk and a multi-day
+  # initial sync; never started unless: docker compose --profile mainnet up -d
+  # Enable the profile by uncommenting the NETWORK_MAINNET_* lines in .env.
+  zebra-mainnet:
+    profiles: ["mainnet"]
+    image: zfnd/zebra:6.3.0
+    command: ["zebrad", "-c", "/etc/zebra/zebrad.toml", "start"]
+    environment:
+      - ZEBRA_STATE__CACHE_DIR=/var/cache/zebra
+    volumes:
+      - ./mainnet/zebrad.toml:/etc/zebra/zebrad.toml:ro
+      - zebra-mainnet-state:/var/cache/zebra
+
+  auctioneer-mainnet:
+    profiles: ["mainnet"]
+    build: ./docker/zecd
+    depends_on:
+      - zebra-mainnet
+    command: ["--datadir", "/var/lib/zecd", "--conf=/etc/zecd/zecd.toml"]
+    environment:
+      - RUST_LOG=info
+    volumes:
+      - ./mainnet/zecd.auctioneer.toml:/etc/zecd/zecd.toml:ro
+      - auctioneer-mainnet-data:/var/lib/zecd
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    depends_on:
+      - auctioneer
+    restart: on-failure
+    # ${VAR:-default} is interpolated from the project .env (or the real
+    # environment); the defaults match .env.example. zecd URLs and in-container
+    # paths are fixed to the compose network — do not override from .env.
+    environment:
+      - RUST_LOG=info
+      - ZECD_URL=http://auctioneer:18232/
+      - ZECD_HEALTH=http://auctioneer:9233/readyz
+      - ZEBRA_URL=http://zebra:18234
+      - SYNC_PROGRESS_MIN=${SYNC_PROGRESS_MIN:-0.9999}
+      - ZECD_USER=${ZECD_USER:-auctioneer}
+      - ZECD_PASS=${ZECD_PASS:-regtest-auctioneer-pw}
+      # Hosted in-app wallet: a SEPARATE zecd (the funder) whose shielded
+      # addresses the wallet page hands out. Kept off the auctioneer so user
+      # funds never mix with escrow.
+      - FUNDER_URL=http://funder:18242/
+      - FUNDER_HEALTH=http://funder:9243/readyz
+      - FUNDER_USER=${FUNDER_USER:-funder}
+      - FUNDER_PASS=${FUNDER_PASS:-regtest-funder-pw}
+      - FAUCET_ZATS=${FAUCET_ZATS:-50000000}
+      - FAUCET_COOLDOWN_SECS=${FAUCET_COOLDOWN_SECS:-60}
+      # Regtest has no built-in miner; the API produces a block whenever the
+      # mempool is non-empty OR a bid is still waiting on confirmation depth,
+      # so the hosted demo settles unattended. 0 stops it.
+      - MINER_INTERVAL_SECS=${MINER_INTERVAL_SECS:-1}
+      - DB_PATH=/data/bidshield.db
+      # Second profile: public testnet (see testnet/). Empty until the
+      # NETWORK_TESTNET_* vars are set in .env (and the testnet compose
+      # profile is started); ignored when empty.
+      - NETWORK_TESTNET_URL=${NETWORK_TESTNET_URL:-}
+      - NETWORK_TESTNET_HEALTH=${NETWORK_TESTNET_HEALTH:-}
+      - NETWORK_TESTNET_USER=${NETWORK_TESTNET_USER:-}
+      - NETWORK_TESTNET_PASS=${NETWORK_TESTNET_PASS:-}
+      - NETWORK_TESTNET_DB_PATH=${NETWORK_TESTNET_DB_PATH:-}
+      - NETWORK_TESTNET_ZEBRA_URL=${NETWORK_TESTNET_ZEBRA_URL:-}
+      # Mainnet profile: empty until the NETWORK_MAINNET_* vars are set in
+      # .env (and the mainnet compose profile is started); ignored when empty.
+      - NETWORK_MAINNET_URL=${NETWORK_MAINNET_URL:-}
+      - NETWORK_MAINNET_HEALTH=${NETWORK_MAINNET_HEALTH:-}
+      - NETWORK_MAINNET_USER=${NETWORK_MAINNET_USER:-}
+      - NETWORK_MAINNET_PASS=${NETWORK_MAINNET_PASS:-}
+      - NETWORK_MAINNET_DB_PATH=${NETWORK_MAINNET_DB_PATH:-}
+      - NETWORK_MAINNET_ZEBRA_URL=${NETWORK_MAINNET_ZEBRA_URL:-}
+      - WEB_DIST=/app/web/dist
+      - BIND=${BIND:-0.0.0.0:8080}
+      - POLL_SECS=${POLL_SECS:-2}
+      # Public chains keep a strict confirmation depth. Regtest is a demo —
+      # REGTEST_CONF_TARGET trades reorg margin for a bid that confirms in
+      # seconds, so a live walkthrough never stalls waiting for depth.
+      - CONF_TARGET=${CONF_TARGET:-10}
+      - REGTEST_CONF_TARGET=${REGTEST_CONF_TARGET:-3}
+      - FEE_ZATS=${FEE_ZATS:-10000}
+      - MIN_BID_ZATS=${MIN_BID_ZATS:-100000}
+      - MAX_BID_ZATS=${MAX_BID_ZATS:-10000000000000}
+      - MISSED_GRACE_SECS=${MISSED_GRACE_SECS:-120}
+      - SESSION_TTL_SECS=${SESSION_TTL_SECS:-604800}
+      - COOKIE_SECURE=${COOKIE_SECURE:-0}
+      - RATE_AUTH_PER_MIN=${RATE_AUTH_PER_MIN:-20}
+      - RATE_WRITE_PER_MIN=${RATE_WRITE_PER_MIN:-30}
+      - RATE_READ_PER_MIN=${RATE_READ_PER_MIN:-240}
+      - AUTH_FAIL_MAX=${AUTH_FAIL_MAX:-10}
+      - AUTH_LOCKOUT_SECS=${AUTH_LOCKOUT_SECS:-60}
+      - MAX_CONCURRENT_REQUESTS=${MAX_CONCURRENT_REQUESTS:-64}
+    ports:
+      - "127.0.0.1:8080:8080"     # API + web UI
+    volumes:
+      - api-data:/data
+
+volumes:
+  zebra-state:
+  zebra-testnet-state:
+  zebra-mainnet-state:
+  funder-data:
+  auctioneer-data:
+  auctioneer-testnet-data:
+  funder-testnet-data:
+  auctioneer-mainnet-data:
+  api-data:

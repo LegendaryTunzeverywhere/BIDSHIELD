@@ -1,0 +1,35 @@
+# Auctioneer zecd config (spike): the product wallet. Holds auction escrow bids
+# shielded, detects them via listtransactions, refunds losers, pays winner/seller.
+# Stock confirmation policy (no [spend] overrides) so the spike proves mainnet-like
+# behavior; the product will lower these for demo snappiness (documented).
+
+network = "regtest"
+datadir = "/var/lib/zecd"
+default_wallet = "default"
+
+[wallets.default]
+dir = "/var/lib/zecd/default"
+
+[backend]
+server = "zebra://zebra:18234"
+connect_timeout_secs = 10
+reconnect_base_secs = 1
+reconnect_max_secs = 60
+
+[rpc]
+bind = "0.0.0.0"
+port = 18232
+user = "auctioneer"
+password = "regtest-auctioneer-pw"
+allow_duplicate_shielded_recipients = true
+
+[keys]
+auto_unlock = true
+
+[sync]
+interval_secs = 5
+
+[health]
+enabled = true
+bind = "0.0.0.0"
+port = 9233

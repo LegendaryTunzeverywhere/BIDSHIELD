@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = ["crates/zecd-client", "crates/settlement", "crates/api"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+axum = "0.8"
+axum-extra = { version = "0.10", features = ["cookie"] }
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+k256 = { version = "0.13", features = ["ecdsa"] }
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+thiserror = "2"
+time = "0.3"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tower-http = { version = "0.6", features = ["fs", "timeout"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[profile.release]
+lto = "thin"

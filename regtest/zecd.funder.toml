@@ -1,0 +1,46 @@
+# Funder zecd config: owns the regtest chain's transparent coinbase, shields it,
+# and pays shielded "bids" to the auctioneer wallet. Regtest infrastructure only.
+
+network = "regtest"
+datadir = "/var/lib/zecd"
+default_wallet = "default"
+
+[wallets.default]
+dir = "/var/lib/zecd/default"
+
+[pools]
+enabled = ["sapling", "orchard"]
+default_receivers = ["orchard"]
+transparent = true
+
+[backend]
+server = "zebra://zebra:18234"
+connect_timeout_secs = 5
+reconnect_base_secs = 1
+reconnect_max_secs = 2
+
+[rpc]
+bind = "0.0.0.0"
+port = 18242
+user = "funder"
+password = "regtest-funder-pw"
+allow_duplicate_shielded_recipients = true
+
+[keys]
+auto_unlock = true
+
+[sync]
+interval_secs = 2
+rebroadcast_secs = 2
+
+[health]
+enabled = true
+bind = "0.0.0.0"
+port = 9243
+
+# The harness's funder depths: z_shieldcoinbase yields a single note with no change,
+# and the harness owns the chain (no reorg risk). Only the regtest funder gets these -
+# the auctioneer keeps stock depths so the spike exercises mainnet-like policy.
+[spend]
+trusted_confirmations = 1
+untrusted_confirmations = 1

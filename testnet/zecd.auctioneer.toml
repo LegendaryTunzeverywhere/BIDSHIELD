@@ -1,0 +1,38 @@
+# Auctioneer zecd config (testnet profile): same role as regtest/zecd.auctioneer.toml
+# but on public Zcash testnet, in LIGHT MODE — no local full node. The `"zecrocks"`
+# alias below is zecd's built-in shorthand for the zec.rocks public lightwalletd
+# (testnet.zec.rocks:443 for this network, TLS), so there is no multi-day NU7-era
+# IBD and no zebra-testnet container to babysit. The wallet is zecd v0.9.0-rc1
+# (NU7-era). Fund from a TESTNET wallet or the Valar faucet — there is no
+# miner here, so the regtest funder service does not apply.
+
+network = "testnet"
+datadir = "/var/lib/zecd"
+default_wallet = "default"
+
+[wallets.default]
+dir = "/var/lib/zecd/default"
+
+[backend]
+server = "zecrocks"
+connect_timeout_secs = 10
+reconnect_base_secs = 1
+reconnect_max_secs = 60
+
+[rpc]
+bind = "0.0.0.0"
+port = 18232
+user = "auctioneer"
+password = "testnet-auctioneer-pw"
+allow_duplicate_shielded_recipients = true
+
+[keys]
+auto_unlock = true
+
+[sync]
+interval_secs = 5
+
+[health]
+enabled = true
+bind = "0.0.0.0"
+port = 9233

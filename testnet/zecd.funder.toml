@@ -1,0 +1,47 @@
+# Funder/bidder zecd config (testnet profile): the scripted bidder wallet that
+# mirrors regtest's funder role. No miner here — fund it from the Valar faucet
+# (POST https://faucet.testnet.valargroup.dev/api/claim) or a TESTNET
+# wallet, then bid via z_sendmany with the product's `bid:<uuid>` memo.
+
+network = "testnet"
+datadir = "/var/lib/zecd"
+default_wallet = "default"
+
+[wallets.default]
+dir = "/var/lib/zecd/default"
+
+[pools]
+enabled = ["orchard"]
+transparent = true
+
+[backend]
+server = "zecrocks"
+connect_timeout_secs = 10
+reconnect_base_secs = 1
+reconnect_max_secs = 60
+# zec.rocks (ECC LightWalletD v0.5.4) serves transparent + ironwood data inside compact
+# blocks, but no released lightwalletd fills GetLightdInfo.lightwalletProtocolVersion, so
+# zecd's capability probe would refuse a transparent-enabled wallet against it. Assert it.
+assume_transparent_in_compact_blocks = true
+
+[spend]
+# Allow t->z shielding: the Valar faucet pays transparent tm... addresses; we receive there
+# and immediately shield into orchard. Shielded->shielded sends (the bid path) are unaffected.
+privacy_policy = "AllowRevealedSenders"
+
+[rpc]
+bind = "0.0.0.0"
+port = 18232
+user = "funder"
+password = "testnet-funder-pw"
+
+[keys]
+auto_unlock = true
+
+[sync]
+interval_secs = 5
+
+[health]
+enabled = true
+bind = "0.0.0.0"
+port = 9233

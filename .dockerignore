@@ -1,0 +1,11 @@
+target/
+web/node_modules/
+web/dist/
+data/
+logs/
+.git/
+e2e/.spike-*.json
+docker/zecd/zecd
+docker/zecd/*.tar.gz
+*.log
+*.db

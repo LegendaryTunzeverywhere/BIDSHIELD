@@ -1,0 +1,15 @@
+# zebrad Testnet config for Bidshield's second profile: public Zcash testnet,
+# real consensus rules (no disable_pow, no activation overrides — the testnet
+# schedule is baked into zebrad). The api talks to the paired zecd, not here.
+
+[network]
+network = "Testnet"
+listen_addr = "0.0.0.0:8233"
+
+[state]
+ephemeral = false
+cache_dir = "/var/cache/zebra"
+
+[rpc]
+listen_addr = "0.0.0.0:18234"
+enable_cookie_auth = false

@@ -1,0 +1,58 @@
+# --- dependencies / build output ---
+node_modules/
+target/
+web/dist/
+
+# --- runtime state (volumes, DB, logs) ---
+data/
+logs/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.log
+
+# --- env & secrets: never commit ---
+# .env carries real regtest credentials AND a paid testnet RPC endpoint.
+.env
+.env.*
+!.env.example
+!.env.example.*
+secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+service-account.json
+
+# --- chain / wallet material ---
+# Seed phrases for the testnet wallets live next to their compose profile.
+*.mnemonic
+wallet.dat
+*.generated.toml
+
+# --- docker build context artifacts (zecd binaries are fetched, not built) ---
+docker/zecd/zecd
+docker/zecd/zecd-*
+docker/zecd/*.tar.gz
+
+# --- e2e / spike scratch ---
+e2e/.spike-*.json
+
+# --- OS / editor noise ---
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- local agent / tooling dirs ---
+.claude/
+.opencode/
+.cursor/
+
+docs/

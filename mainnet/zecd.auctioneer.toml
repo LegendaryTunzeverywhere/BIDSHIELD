@@ -1,0 +1,35 @@
+# Auctioneer zecd config (mainnet profile): same role as the regtest/testnet
+# auctioneer but on real Zcash mainnet. REAL FUNDS — fund deliberately, treat
+# the seed (testnet/auctioneer-mainnet.mnemonic analogue: created at init) as
+# production key material, and never reuse it anywhere else.
+
+network = "main"
+datadir = "/var/lib/zecd"
+default_wallet = "default"
+
+[wallets.default]
+dir = "/var/lib/zecd/default"
+
+[backend]
+server = "zebra://zebra-mainnet:18234"
+connect_timeout_secs = 10
+reconnect_base_secs = 1
+reconnect_max_secs = 60
+
+[rpc]
+bind = "0.0.0.0"
+port = 18232
+user = "auctioneer"
+password = "mainnet-auctioneer-pw"
+allow_duplicate_shielded_recipients = true
+
+[keys]
+auto_unlock = true
+
+[sync]
+interval_secs = 5
+
+[health]
+enabled = true
+bind = "0.0.0.0"
+port = 9233
