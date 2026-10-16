@@ -1,12 +1,13 @@
 # Railway/root build: same image as docker/api.Dockerfile (context = repo root).
 # Builds the SPA, then the Rust API binary, then ships a slim runtime.
-# Note: cache mounts carry explicit ids (Railway's Dockerfile validator requires
-# them) and there is no VOLUME directive (attach a Railway Volume at /data).
+# No BuildKit cache mounts (Railway's validator requires hard-coded service-id
+# prefixes that are currently broken) and no VOLUME directive (attach a
+# Railway Volume at /data from the dashboard instead).
 
 FROM node:22-alpine AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
-RUN --mount=type=cache,id=npm-cache,target=/root/.npm npm ci --no-audit --no-fund
+RUN npm ci --no-audit --no-fund
 COPY web/ .
 RUN npm run build
 
@@ -15,9 +16,7 @@ RUN apk add --no-cache musl-dev gcc
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
-RUN --mount=type=cache,id=cargo-target,target=/src/target \
-    --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
-    cargo build --release --bin api && cp target/release/api /usr/local/bin/bidshield-api
+RUN cargo build --release --bin api && cp target/release/api /usr/local/bin/bidshield-api
 
 FROM alpine:3.22
 RUN adduser -D -u 10001 app && mkdir -p /data && chown app /data
