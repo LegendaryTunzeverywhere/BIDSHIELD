@@ -3,8 +3,10 @@ import { Link } from 'react-router-dom';
 import { api, shortId, zatsToZec, type Dashboard as DashboardData } from '../api';
 import FlapText from '../components/FlapText';
 import TxidLink from '../components/TxidLink';
+import { useSession } from '../session';
 
 export default function Dashboard() {
+  const { ready } = useSession();
   const [data, setData] = useState<DashboardData | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -34,10 +36,11 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
+    if (!ready) return;
     refresh();
     const id = setInterval(refresh, 5000);
     return () => clearInterval(id);
-  }, [refresh]);
+  }, [ready, refresh]);
 
   const act = async (auctionId: string, action: 'close' | 'settle') => {
     setBusyId(`${action}:${auctionId}`);

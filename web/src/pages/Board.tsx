@@ -11,8 +11,10 @@ import {
 } from '../api';
 import Countdown from '../components/Countdown';
 import FlapText from '../components/FlapText';
+import { useSession } from '../session';
 
 export default function Board() {
+  const { ready } = useSession();
   const [auctions, setAuctions] = useState<Auction[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -32,13 +34,14 @@ export default function Board() {
   }, []);
 
   useEffect(() => {
+    if (!ready) return;
     refresh();
     const id = setInterval(() => {
       refresh();
       setNow(Date.now() / 1000);
     }, 5000);
     return () => clearInterval(id);
-  }, [refresh]);
+  }, [ready, refresh]);
 
   const openLots = auctions.filter((a) => a.status === 'open' && a.closes_at > now);
   const nearest = openLots.length

@@ -1,6 +1,9 @@
-// Backend base URL for the SPA's /api calls. Empty string = same-origin (the
-// API serves the SPA itself, as in the all-in-one deploy). Point this at a
-// standalone backend origin when the frontend is hosted separately (e.g.
-// Vercel): set VITE_API_URL at build time. Trailing slashes are stripped so
-// `${API_BASE}/api/...` is always well-formed.
-export const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
+// Vercel's /api rewrite keeps the session cookie first-party; do not bypass it
+// with VITE_API_URL, even if that variable is present in the build environment.
+// Other split deployments can still point directly at a backend origin.
+const useVercelProxy =
+  typeof window !== 'undefined' && window.location.hostname.endsWith('.vercel.app');
+
+export const API_BASE = (
+  useVercelProxy ? '' : import.meta.env.VITE_API_URL || ''
+).replace(/\/+$/, '');

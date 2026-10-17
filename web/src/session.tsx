@@ -152,6 +152,7 @@ export function seedPubkey(seed: string): string {
 interface SessionState {
   identity: AuthIdentity | null;
   loading: boolean;
+  ready: boolean;
   /** True while the session is an auto-minted throwaway (not a real seed). */
   ephemeral: boolean;
   /** Hostname as the browser sees it — 127.0.0.1 vs localhost matters. */
@@ -227,6 +228,7 @@ function rememberSeed(seed: string | null): void {
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [identity, setIdentity] = useState<AuthIdentity | null>(null);
   const [loading, setLoading] = useState(true);
+  const [ready, setReady] = useState(false);
   const [ephemeral, setEphemeral] = useState(false);
   const [storedSeed, setStoredSeed] = useState<string | null>(() => readStoredSeed());
 
@@ -241,6 +243,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         });
         const me: AuthMe = await res.json();
         setIdentity(me.authenticated ? me.identity : null);
+        if (me.authenticated) setReady(true);
       } finally {
         clearTimeout(timer);
       }
@@ -283,6 +286,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    setReady(false);
     await fetch(`${API_BASE}/api/auth/logout`, {
       credentials: 'include',
       method: 'POST',
@@ -299,6 +303,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     const id = await mintEphemeralSession();
     setIdentity(id);
     setEphemeral(!!id);
+    setReady(true);
   }, []);
 
   const forgetSeed = useCallback(() => {
@@ -318,11 +323,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (loading || identity || !storedSeed || resumedRef.current) return;
     resumedRef.current = true;
-    void signIn(storedSeed).catch(() => {
-      // Bad stored seed (or a rate limit): fall back to the signed-out view.
-      rememberSeed(null);
-      setStoredSeed(null);
-    });
+    void signIn(storedSeed).then(
+      () => setReady(true),
+      () => {
+        // Bad stored seed (or a rate limit): fall back to the signed-out view.
+        rememberSeed(null);
+        setStoredSeed(null);
+      },
+    );
   }, [loading, identity, storedSeed, signIn]);
 
   // Every API read is session-gated. Browsers with no seed get an ephemeral
@@ -335,13 +343,14 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     void mintEphemeralSession().then((id) => {
       setIdentity(id);
       setEphemeral(!!id);
-    });
+    }).finally(() => setReady(true));
   }, [loading, identity, storedSeed]);
 
   const value = useMemo(
     () => ({
       identity,
       loading,
+      ready,
       ephemeral,
       hostname: window.location.hostname,
       storedSeed,
@@ -350,7 +359,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       refresh,
       forgetSeed,
     }),
-    [identity, loading, ephemeral, storedSeed, signIn, signOut, refresh, forgetSeed],
+    [identity, loading, ready, ephemeral, storedSeed, signIn, signOut, refresh, forgetSeed],
   );
 
   return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
