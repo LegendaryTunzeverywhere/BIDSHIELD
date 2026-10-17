@@ -147,11 +147,16 @@ pub fn zip321_uri(address: &str, amount_zec: &str, memo: &str) -> String {
 }
 
 /// Reject state-changing auth requests whose Origin does not match Host
-/// (CSRF defense-in-depth on top of SameSite=Strict).
-fn check_origin(headers: &HeaderMap) -> Result<(), ApiError> {
+/// (CSRF defense-in-depth on top of SameSite). Split deploys (frontend on
+/// its own origin) must pass the configured CORS_ORIGIN here too, or every
+/// browser sign-in dies as "origin mismatch".
+fn check_origin(headers: &HeaderMap, cors_origin: Option<&str>) -> Result<(), ApiError> {
     let Some(origin) = headers.get("origin").and_then(|v| v.to_str().ok()) else {
         return Ok(()); // non-browser clients (curl, e2e)
     };
+    if cors_origin.is_some_and(|allowed| allowed.eq_ignore_ascii_case(origin)) {
+        return Ok(()); // split frontend: explicitly allowed cross-origin client
+    }
     let host = headers
         .get("host")
         .and_then(|v| v.to_str().ok())
@@ -338,7 +343,7 @@ async fn auth_verify(
     headers: HeaderMap,
     Json(body): Json<AuthVerify>,
 ) -> Result<(CookieJar, Json<AuthIdentityResponse>), ApiError> {
-    check_origin(&headers)?;
+    check_origin(&headers, state.cfg.cors_origin.as_deref())?;
     let ip = addr.ip().to_string();
     // Lock out IPs grinding signatures (secp256k1 recovery is CPU-heavy).
     if state.rate.auth_locked(&ip) {
@@ -439,7 +444,7 @@ async fn auth_logout(
     jar: CookieJar,
     headers: HeaderMap,
 ) -> Result<(CookieJar, StatusCode), ApiError> {
-    check_origin(&headers)?;
+    check_origin(&headers, state.cfg.cors_origin.as_deref())?;
     if let Some(token) = jar.get(auth::SESSION_COOKIE) {
         let hash = auth::hash_token(token.value());
         let net = state.active();
@@ -743,7 +748,7 @@ async fn faucet_claim(
     jar: CookieJar,
     headers: HeaderMap,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
-    check_origin(&headers)?;
+    check_origin(&headers, state.cfg.cors_origin.as_deref())?;
     let net = state.active();
     let pubkey = {
         let db = net.db();
@@ -840,7 +845,7 @@ async fn wallet_send(
     headers: HeaderMap,
     Json(body): Json<WalletSend>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
-    check_origin(&headers)?;
+    check_origin(&headers, state.cfg.cors_origin.as_deref())?;
     let net = state.active();
     let pubkey = {
         let db = net.db();
@@ -902,7 +907,7 @@ async fn pay_bid(
     headers: HeaderMap,
     Path(bid_id): Path<String>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
-    check_origin(&headers)?;
+    check_origin(&headers, state.cfg.cors_origin.as_deref())?;
     let net = state.active();
     let (pubkey, amount, target_bid, auction_open) = {
         let db = net.db();
@@ -985,7 +990,7 @@ async fn pay_collateral(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
-    check_origin(&headers)?;
+    check_origin(&headers, state.cfg.cors_origin.as_deref())?;
     let net = state.active();
     let pubkey = {
         let db = net.db();
@@ -1221,7 +1226,7 @@ async fn create_auction(
     headers: HeaderMap,
     Json(body): Json<CreateAuction>,
 ) -> Result<(StatusCode, Json<Auction>), ApiError> {
-    check_origin(&headers)?;
+    check_origin(&headers, state.cfg.cors_origin.as_deref())?;
     let Some((seller_pubkey, _)) = ({
         let net = state.active();
         let db = net.db();
@@ -1556,7 +1561,7 @@ async fn place_bid(
     Path(id): Path<String>,
     Json(body): Json<PlaceBid>,
 ) -> Result<(StatusCode, Json<PlaceBidResponse>), ApiError> {
-    check_origin(&headers)?;
+    check_origin(&headers, state.cfg.cors_origin.as_deref())?;
     // Bidding is identity-bound: a signed-in session is required so the
     // server can attribute a bid to a first-party key. This is what makes the
     // self-bid rejection below enforceable. The pubkey is a derived key,
@@ -1702,7 +1707,7 @@ async fn close_auction(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Auction>, ApiError> {
-    check_origin(&headers)?;
+    check_origin(&headers, state.cfg.cors_origin.as_deref())?;
     let net = state.active();
     let db = net.db();
     let mut auction =
@@ -2021,7 +2026,7 @@ async fn payout_delivery_proof(
     Path(id): Path<String>,
     Json(body): Json<DeliveryProofRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    check_origin(&headers)?;
+    check_origin(&headers, state.cfg.cors_origin.as_deref())?;
     let proof = body.proof.trim().to_string();
     if proof.is_empty() {
         return Err(ApiError::BadRequest("proof must be non-empty".into()));
@@ -2063,7 +2068,7 @@ async fn payout_resolve(
     Path(id): Path<String>,
     Json(body): Json<PayoutResolveRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    check_origin(&headers)?;
+    check_origin(&headers, state.cfg.cors_origin.as_deref())?;
     let slash = match body.action.trim() {
         "release" => false,
         "slash" => true,
@@ -2450,7 +2455,7 @@ async fn settle_auction(
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
-    check_origin(&headers)?;
+    check_origin(&headers, state.cfg.cors_origin.as_deref())?;
     let net = state.active();
 
     // Guard the state machine before doing any work.
@@ -2922,7 +2927,7 @@ async fn switch_network(
     headers: HeaderMap,
     Json(body): Json<SwitchNetwork>,
 ) -> Result<Json<Value>, ApiError> {
-    check_origin(&headers)?;
+    check_origin(&headers, state.cfg.cors_origin.as_deref())?;
     let name = body.name.trim().to_lowercase();
     {
         let net = state.active();
@@ -2989,13 +2994,29 @@ mod tests {
     #[test]
     fn origin_check() {
         let mut h = HeaderMap::new();
-        assert!(check_origin(&h).is_ok()); // no Origin: non-browser
+        assert!(check_origin(&h, None).is_ok()); // no Origin: non-browser
         h.insert("host", "example.com".parse().unwrap());
         h.insert("origin", "https://example.com".parse().unwrap());
-        assert!(check_origin(&h).is_ok());
+        assert!(check_origin(&h, None).is_ok());
         h.insert("origin", "https://evil.com".parse().unwrap());
-        assert!(check_origin(&h).is_err());
+        assert!(check_origin(&h, None).is_err());
         h.insert("origin", "null".parse().unwrap());
-        assert!(check_origin(&h).is_err());
+        assert!(check_origin(&h, None).is_err());
+    }
+
+    #[test]
+    fn origin_check_split_frontend() {
+        // Split deploy: the configured CORS origin is a legitimate cross-origin
+        // browser client even though it differs from Host.
+        let allowed = "https://bidshield-demo.vercel.app";
+        let mut h = HeaderMap::new();
+        h.insert("host", "api.example.com".parse().unwrap());
+        h.insert("origin", allowed.parse().unwrap());
+        assert!(check_origin(&h, Some(allowed)).is_ok());
+        // Other cross-origin clients are still rejected.
+        h.insert("origin", "https://evil.com".parse().unwrap());
+        assert!(check_origin(&h, Some(allowed)).is_err());
+        // Without a configured CORS origin the old host-match rule applies.
+        assert!(check_origin(&h, None).is_err());
     }
 }

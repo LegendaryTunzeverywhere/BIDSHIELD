@@ -1,3 +1,4 @@
+import { API_BASE } from './apibase';
 import { mintEphemeralSession } from './session';
 
 export interface Auction {
@@ -228,7 +229,10 @@ export interface Dashboard {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const doFetch = () =>
-    fetch(path, {
+    fetch(API_BASE + path, {
+      // Cross-origin cookies (split frontend): send the session cookie on
+      // every request, otherwise the backend never sees our session.
+      credentials: 'include',
       headers: init?.body ? { 'content-type': 'application/json' } : undefined,
       ...init,
     });

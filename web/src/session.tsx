@@ -8,6 +8,7 @@ import {
   useState,
   type ReactNode,
 } from 'react';
+import { API_BASE } from './apibase';
 import { HDKey } from '@scure/bip32';
 import { generateMnemonic, mnemonicToSeedSync, validateMnemonic } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english';
@@ -176,12 +177,15 @@ const SessionContext = createContext<SessionState | null>(null);
  */
 export async function mintEphemeralSession(): Promise<AuthIdentity | null> {
   try {
-    const nonceRes = await fetch('/api/auth/nonce');
+    const nonceRes = await fetch(`${API_BASE}/api/auth/nonce`, {
+      credentials: 'include',
+    });
     if (!nonceRes.ok) return null;
     const { nonce, message } = await nonceRes.json();
     const priv = crypto.getRandomValues(new Uint8Array(32));
     const signature = signWithPriv(message, priv);
-    const verifyRes = await fetch('/api/auth/verify', {
+    const verifyRes = await fetch(`${API_BASE}/api/auth/verify`, {
+      credentials: 'include',
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ nonce, signature }),
@@ -231,7 +235,10 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 8000);
       try {
-        const res = await fetch('/api/auth/me', { signal: ctrl.signal });
+        const res = await fetch(`${API_BASE}/api/auth/me`, {
+          credentials: 'include',
+          signal: ctrl.signal,
+        });
         const me: AuthMe = await res.json();
         setIdentity(me.authenticated ? me.identity : null);
       } finally {
@@ -249,13 +256,16 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     if (!validateMnemonic(mnemonic, wordlist)) {
       throw new Error('That does not look like a valid seed phrase.');
     }
-    const nonceRes = await fetch('/api/auth/nonce');
+    const nonceRes = await fetch(`${API_BASE}/api/auth/nonce`, {
+      credentials: 'include',
+    });
     if (!nonceRes.ok) throw new Error('could not obtain sign-in nonce');
     const { nonce, message } = await nonceRes.json();
 
     const signature = signMessage(message, mnemonic);
 
-    const verifyRes = await fetch('/api/auth/verify', {
+    const verifyRes = await fetch(`${API_BASE}/api/auth/verify`, {
+      credentials: 'include',
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ nonce, signature }),
@@ -273,15 +283,22 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
-    await fetch('/api/auth/logout', { method: 'POST' }).catch(() => undefined);
+    await fetch(`${API_BASE}/api/auth/logout`, {
+      credentials: 'include',
+      method: 'POST',
+    }).catch(() => undefined);
+    // An explicit sign-out detaches this device: keep remembering the phrase
+    // and the next visit silently re-signs the same identity — the judge
+    // signs out only to watch their wallet reappear.
+    rememberSeed(null);
+    setStoredSeed(null);
     setIdentity(null);
-    // Reads are session-gated: keep the board browsable by minting a fresh
-    // throwaway key unless a real seed is still remembered on this device.
-    if (!readStoredSeed()) {
-      const id = await mintEphemeralSession();
-      setIdentity(id);
-      setEphemeral(!!id);
-    }
+    // Reads are session-gated: mint a fresh throwaway so the board stays
+    // browsable. It is never presented as an identity (the header chip and
+    // both wallet panels hide while `ephemeral` is set).
+    const id = await mintEphemeralSession();
+    setIdentity(id);
+    setEphemeral(!!id);
   }, []);
 
   const forgetSeed = useCallback(() => {

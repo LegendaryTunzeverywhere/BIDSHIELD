@@ -170,7 +170,10 @@ pub fn session_cookie(token: &str, max_age_secs: i64, secure: bool) -> Cookie<'s
     Cookie::build((SESSION_COOKIE, token.to_string()))
         .path("/")
         .http_only(true)
-        .same_site(SameSite::Strict)
+        // Cross-site frontend (Vercel SPA -> API origin) needs SameSite=None,
+        // which browsers only honor with Secure. Same-origin deploys keep
+        // Strict.
+        .same_site(if secure { SameSite::None } else { SameSite::Strict })
         .secure(secure)
         .max_age(time::Duration::seconds(max_age_secs))
         .build()
@@ -180,7 +183,7 @@ pub fn clear_cookie(secure: bool) -> Cookie<'static> {
     Cookie::build((SESSION_COOKIE, ""))
         .path("/")
         .http_only(true)
-        .same_site(SameSite::Strict)
+        .same_site(if secure { SameSite::None } else { SameSite::Strict })
         .secure(secure)
         .max_age(time::Duration::seconds(0))
         .build()

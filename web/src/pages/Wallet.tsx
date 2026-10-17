@@ -18,7 +18,7 @@ function amountToZats(value: string): number | null {
 }
 
 export default function Wallet() {
-  const { identity, loading } = useSession();
+  const { identity, ephemeral, loading } = useSession();
   const [wallet, setWallet] = useState<WalletView | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -41,7 +41,9 @@ export default function Wallet() {
   const loadRef = useRef<() => void>(() => {});
 
   const load = useCallback(async () => {
-    if (!identity) return;
+    // A throwaway read session is not a wallet owner — never ask the server
+    // to mint (or read) an address for it.
+    if (!identity || ephemeral) return;
     // Coalesce rather than drop: a refresh requested while one is already in
     // flight must still run, or a post-claim/send update gets lost and the
     // balance sits stale until the next poll.
@@ -64,19 +66,19 @@ export default function Wallet() {
         loadRef.current();
       }
     }
-  }, [identity]);
+  }, [identity, ephemeral]);
 
   useEffect(() => {
     loadRef.current = () => void load();
   }, [load]);
 
   useEffect(() => {
-    if (!identity) {
+    if (!identity || ephemeral) {
       setWallet(null);
       return;
     }
     void load();
-  }, [identity, load]);
+  }, [identity, ephemeral, load]);
 
   useEffect(() => {
     let alive = true;
@@ -98,12 +100,12 @@ export default function Wallet() {
   }, [wait]);
 
   useEffect(() => {
-    if (!identity) return;
+    if (!identity || ephemeral) return;
     const tick = window.setInterval(() => {
       if (document.visibilityState === 'visible') void load();
     }, 15000);
     return () => window.clearInterval(tick);
-  }, [identity, load]);
+  }, [identity, ephemeral, load]);
 
   const claimFaucet = async () => {
     setFaucetBusy(true);
@@ -183,7 +185,7 @@ export default function Wallet() {
     );
   }
 
-  if (!identity) {
+  if (!identity || ephemeral) {
     return (
       <div className="panel">
         <h2 className="panel-title">Wallet</h2>

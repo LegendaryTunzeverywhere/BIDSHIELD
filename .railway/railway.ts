@@ -104,6 +104,9 @@ export default defineRailway(() => {
       MINER_INTERVAL_SECS: { value: "1" },
       DB_PATH: { value: "/data/bidshield.db" },
       COOKIE_SECURE: { value: "1" },
+      // Split frontend: set to the Vercel SPA origin (https://<app>.vercel.app)
+      // once it exists; empty = same-origin only.
+      CORS_ORIGIN: { value: "" },
       SYNC_PROGRESS_MIN: { value: "0.9999" },
     },
     volumeMounts: { "api-data": { mountPath: "/data" } },

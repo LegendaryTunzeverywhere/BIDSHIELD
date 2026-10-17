@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use tokio::net::TcpListener;
+use tower_http::cors::CorsLayer;
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::{info, warn};
 
@@ -199,8 +200,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             routes::security_headers_middleware,
         ))
         // Body cap: every API payload is tiny (auction form, JSON auth).
-        .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))
-        .with_state(state);
+        .layer(axum::extract::DefaultBodyLimit::max(16 * 1024));
+
+    // Split deploys (frontend hosted apart from the API, e.g. on Vercel):
+    // when CORS_ORIGIN is set, answer preflights and allow that origin with
+    // credentials. Empty = same-origin only (the API serves the SPA itself).
+    let app = match &state.cfg.cors_origin {
+        Some(origin) => {
+            let origin: axum::http::HeaderValue = origin
+                .parse()
+                .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
+            app.layer(
+                CorsLayer::new()
+                    .allow_origin(origin)
+                    .allow_credentials(true)
+                    .allow_methods([
+                        axum::http::Method::GET,
+                        axum::http::Method::POST,
+                        axum::http::Method::PUT,
+                        axum::http::Method::PATCH,
+                        axum::http::Method::DELETE,
+                        axum::http::Method::OPTIONS,
+                    ])
+                    .allow_headers([
+                        axum::http::header::ACCEPT,
+                        axum::http::header::CONTENT_TYPE,
+                    ]),
+            )
+        }
+        None => app,
+    };
+
+    let app = app.with_state(state);
 
     let listener = TcpListener::bind(&bind).await?;
     info!(addr = %listener.local_addr()?, "listening");

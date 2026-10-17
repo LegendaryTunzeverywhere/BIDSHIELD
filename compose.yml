@@ -171,6 +171,11 @@ services:
       # so the hosted demo settles unattended. 0 stops it.
       - MINER_INTERVAL_SECS=${MINER_INTERVAL_SECS:-1}
       - DB_PATH=/data/bidshield.db
+      # Split frontend (e.g. Vercel): exact origin allowed cross-origin with
+      # cookies. Empty = same-origin only. COOKIE_SECURE must be 1 there
+      # (cross-site cookies need SameSite=None + Secure).
+      - CORS_ORIGIN=${CORS_ORIGIN:-}
+      - COOKIE_SECURE=${COOKIE_SECURE:-0}
       # Second profile: public testnet (see testnet/). Empty until the
       # NETWORK_TESTNET_* vars are set in .env (and the testnet compose
       # profile is started); ignored when empty.

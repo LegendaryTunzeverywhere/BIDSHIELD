@@ -10,24 +10,27 @@ import {
   type WalletView,
 } from '../api';
 import { useSession, isValidSeed, newMnemonic, friendlyWalletError } from '../session';
+import { API_BASE } from '../apibase';
 import FlapText from '../components/FlapText';
 
 export default function Profile() {
-  const { identity, loading, storedSeed, signIn, signOut, forgetSeed } = useSession();
+  const { identity, ephemeral, loading, storedSeed, signIn, signOut, forgetSeed } = useSession();
   const [bids, setBids] = useState<Bid[] | null>(null);
   const [seedInput, setSeedInput] = useState('');
   const [signInError, setSignInError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   const loadBids = useCallback(async () => {
-    if (!identity) return;
+    if (!identity || ephemeral) return;
     try {
-      const res = await fetch('/api/me/bids');
+      const res = await fetch(`${API_BASE}/api/me/bids`, {
+        credentials: 'include',
+      });
       if (res.ok) setBids((await res.json()) as Bid[]);
     } catch {
       setBids([]);
     }
-  }, [identity]);
+  }, [identity, ephemeral]);
 
   useEffect(() => {
     loadBids();
@@ -37,7 +40,9 @@ export default function Profile() {
     return <div className="empty-board">Loading session…</div>;
   }
 
-  if (!identity) {
+  // A throwaway read session is not an identity the judge chose: show the
+  // sign-in panel instead of a phantom profile + freshly minted wallet.
+  if (!identity || ephemeral) {
     return (
       <>
         <div className="page-head">

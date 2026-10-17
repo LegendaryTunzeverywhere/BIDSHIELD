@@ -40,6 +40,10 @@ pub struct Config {
     pub max_duration_secs: i64,
     pub session_ttl_secs: i64,
     pub cookie_secure: bool,
+    /// Split frontend (e.g. a Vercel-hosted SPA): exact origin allowed
+    /// cross-origin, with cookies. `None` = same-origin only (the API serves
+    /// the SPA itself).
+    pub cors_origin: Option<String>,
     pub rate_auth_per_min: u32,
     pub rate_write_per_min: u32,
     pub rate_read_per_min: u32,
@@ -132,6 +136,12 @@ impl Config {
             max_duration_secs: env_num("MAX_DURATION_SECS", 2_592_000),
             session_ttl_secs: env_num("SESSION_TTL_SECS", 604_800),
             cookie_secure: env_num("COOKIE_SECURE", 0) == 1,
+            // Split frontend (e.g. a Vercel-hosted SPA): exact origin allowed
+            // cross-origin with cookies. Empty = same-origin only (the API
+            // serves the SPA itself).
+            cors_origin: std::env::var("CORS_ORIGIN")
+                .ok()
+                .filter(|s| !s.is_empty()),
             rate_auth_per_min: env_num("RATE_AUTH_PER_MIN", 20),
             rate_write_per_min: env_num("RATE_WRITE_PER_MIN", 30),
             rate_read_per_min: env_num("RATE_READ_PER_MIN", 240),
