@@ -45,23 +45,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("zecd wallet never became ready".into());
     }
 
-    let mut auctioneer_ua = String::new();
-    for _ in 0..30 {
-        match zecd.get_new_address(None).await {
-            Ok(ua) if ua.starts_with('u') => {
-                auctioneer_ua = ua;
-                break;
-            }
-            Ok(_) => warn!("getnewaddress returned a non-shielded address; retrying"),
-            Err(e) => warn!("getnewaddress failed: {e}; retrying"),
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    }
-    if auctioneer_ua.is_empty() {
-        return Err("could not obtain a shielded auctioneer address".into());
-    }
-    info!(ua = %auctioneer_ua, network = %default_spec.name, "auctioneer shielded address");
-
     let chain = match zecd.get_blockchain_info().await {
         Ok(info) => state::map_chain(&info.chain),
         Err(e) => {
@@ -77,6 +60,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let conn = rusqlite::Connection::open(&default_spec.db_path)?;
     db::init(&conn)?;
+
+    let auctioneer_ua = resolve_auctioneer_ua(&zecd, &conn, &default_spec.name).await;
+    if auctioneer_ua.is_empty() {
+        return Err("could not obtain a shielded auctioneer address".into());
+    }
+    info!(ua = %auctioneer_ua, network = %default_spec.name, "auctioneer shielded address");
 
     let mut networks: Vec<Arc<NetworkRuntime>> = vec![Arc::new(NetworkRuntime::new(
         default_spec.name.clone(),
@@ -110,13 +99,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
+        if let Some(parent) = std::path::Path::new(&spec.db_path).parent() {
+            if !parent.as_os_str().is_empty() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+        }
+        let conn = rusqlite::Connection::open(&spec.db_path)?;
+        db::init(&conn)?;
+
         let mut ua = String::new();
         let mut chain = spec.name.clone();
         if up {
-            match client.get_new_address(None).await {
-                Ok(a) if a.starts_with('u') => ua = a,
-                _ => warn!(network = %spec.name, "could not obtain shielded address"),
-            }
+            ua = resolve_auctioneer_ua(&client, &conn, &spec.name).await;
             if let Ok(info) = client.get_blockchain_info().await {
                 chain = state::map_chain(&info.chain);
             }
@@ -126,13 +120,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "backend not reachable at boot; watchdog will keep retrying"
             );
         }
-        if let Some(parent) = std::path::Path::new(&spec.db_path).parent() {
-            if !parent.as_os_str().is_empty() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-        }
-        let conn = rusqlite::Connection::open(&spec.db_path)?;
-        db::init(&conn)?;
         info!(network = %spec.name, chain = %chain, ready = up, "network profile loaded");
         networks.push(Arc::new(NetworkRuntime::new(
             spec.name.clone(),
@@ -241,6 +228,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
     Ok(())
+}
+
+/// The auctioneer's shielded address must stay stable across redeploys: lots
+/// register escrow payments to it, and a rotating address (a fresh
+/// `getnewaddress` every boot mints a new random diversifier) strands funds
+/// and confuses clients. Persist the first address in the network database
+/// and only re-mint when the stored one is no longer ours — e.g. the wallet
+/// volume was wiped and restored from the baked mnemonic. Returns an empty
+/// string when no shielded address could be obtained (boot fails).
+async fn resolve_auctioneer_ua(
+    zecd: &zecd_client::ZecdClient,
+    conn: &rusqlite::Connection,
+    network: &str,
+) -> String {
+    if let Ok(Some(stored)) = db::get_setting(conn, "auctioneer_ua") {
+        match zecd.z_validateaddress(&stored).await {
+            Ok(v) if v.ismine => {
+                info!(ua = %stored, network, "reusing stored auctioneer address");
+                return stored;
+            }
+            Ok(v) => info!(
+                ua = %stored,
+                network,
+                ismine = v.ismine,
+                "stored auctioneer address not in wallet; minting a fresh one"
+            ),
+            Err(e) => warn!(
+                ua = %stored,
+                network,
+                "z_validateaddress failed ({e}); minting a fresh auctioneer address"
+            ),
+        }
+    }
+    for _ in 0..30 {
+        match zecd.get_new_address(None).await {
+            Ok(ua) if ua.starts_with('u') => {
+                if let Err(e) = db::set_setting(conn, "auctioneer_ua", &ua) {
+                    warn!(network, "could not persist auctioneer address: {e}");
+                }
+                return ua;
+            }
+            Ok(_) => warn!("getnewaddress returned a non-shielded address; retrying"),
+            Err(e) => warn!("getnewaddress failed: {e}; retrying"),
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+    String::new()
 }
 
 /// Periodically re-check `settling` auctions so an interrupted settlement

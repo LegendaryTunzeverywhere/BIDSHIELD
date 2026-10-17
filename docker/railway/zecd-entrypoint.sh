@@ -2,9 +2,11 @@
 # Self-initializing zecd entrypoint for Railway (volumes are per-service there,
 # so a separate bootstrap job cannot reach into the datadir). Mirrors the init
 # choreography of e2e/spike.mjs: mine-first (the bootstrap job does that), then
-# funder restores the canonical all-zero BIP-39 test-vector mnemonic and
-# auctioneer generates a fresh wallet. Skips init when the wallet already
-# exists (volume survived a redeploy).
+# restore the service's seed from ZECD_MNEMONIC (funder: declared in
+# .railway/railway.ts; auctioneer: a Railway service variable — the phrase
+# lives in .env locally, never in the pushed repo). A fresh volume without the
+# variable fails fast rather than minting a wallet nobody holds. Skips init
+# when the wallet already exists (volume survived a redeploy).
 set -eu
 
 ZECD_ROLE="${ZECD_ROLE:?set ZECD_ROLE to funder or auctioneer}"
@@ -42,15 +44,20 @@ wait_for_chain() {
 }
 
 init_wallet() {
-  if [ "$ZECD_ROLE" = "funder" ]; then
-    printf '%s\n' "${ZECD_MNEMONIC:?funder service needs ZECD_MNEMONIC}" |
-      zecd --datadir "$DATADIR" --conf="$CONF" init --restore --birthday "$ZECD_BIRTHDAY"
-  else
-    zecd --datadir "$DATADIR" --conf="$CONF" init --wallet default --birthday "$ZECD_BIRTHDAY"
-  fi
+  printf '%s\n' "$ZECD_MNEMONIC" |
+    zecd --datadir "$DATADIR" --conf="$CONF" init --restore --birthday "$ZECD_BIRTHDAY"
 }
 
 if [ ! -d "$WALLET_DIR" ]; then
+  # Never mint an un-held key: a fresh wallet must restore the service's
+  # baked seed (set as ZECD_MNEMONIC on the Railway service — this repo does
+  # not carry the auctioneer phrase). Existing volumes skip this branch.
+  if [ -z "${ZECD_MNEMONIC:-}" ]; then
+    echo "ZECD_MNEMONIC not set for role=$ZECD_ROLE; refusing to create a random wallet" >&2
+    echo "set it: dashboard -> service -> Variables -> ZECD_MNEMONIC, or" >&2
+    echo "  railway variable set ZECD_MNEMONIC=\"<BIP-39 phrase>\" --service $ZECD_ROLE" >&2
+    exit 1
+  fi
   wait_for_chain
   attempt=1
   while [ "$attempt" -le 3 ]; do

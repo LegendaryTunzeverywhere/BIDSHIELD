@@ -28,6 +28,18 @@ import path from 'node:path';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const KEEP = process.argv.includes('--keep');
 
+// Minimal repo-root .env loader so local runs share the gitignored seeds
+// (e.g. the auctioneer ZECD_MNEMONIC). Real environment always wins.
+try {
+  const raw = readFileSync(path.join(ROOT, '.env'), 'utf8');
+  for (const line of raw.split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
+    if (m && !(m[1] in process.env)) process.env[m[1]] = m[2].replace(/^["']|["']$/g, '');
+  }
+} catch {
+  /* no .env — script defaults apply */
+}
+
 const ZECD_VERSION = '0.8.2';
 const ZECD_TARBALL = `zecd-${ZECD_VERSION}-linux-amd64.tar.gz`;
 const ZECD_URL = `https://github.com/zecrocks/zecd/releases/download/v${ZECD_VERSION}/${ZECD_TARBALL}`;
@@ -396,7 +408,15 @@ async function main() {
 
   section('P5 auctioneer wallet');
   if (!(await walletInitialized(auctioneerRpc, 9233))) {
-    await initWallet('auctioneer', ['--wallet', 'default', '--birthday', String(FUNDER_BIRTHDAY)]);
+    // Same seed story as Railway: with ZECD_MNEMONIC set (.env) the wallet
+    // restores that phrase — held key, identical wallet after any wipe.
+    // Without it, keep the legacy fresh-wallet init.
+    const seed = (process.env.ZECD_MNEMONIC || '').trim();
+    if (seed) {
+      await initWallet('auctioneer', ['--restore', '--birthday', String(FUNDER_BIRTHDAY)], seed + '\n');
+    } else {
+      await initWallet('auctioneer', ['--wallet', 'default', '--birthday', String(FUNDER_BIRTHDAY)]);
+    }
   }
   compose(['up', '-d', 'auctioneer'], { timeout: 180000 });
   await waitReady(9233, 'auctioneer');

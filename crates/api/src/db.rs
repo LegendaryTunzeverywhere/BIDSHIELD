@@ -198,6 +198,10 @@ pub fn init(conn: &Connection) -> rusqlite::Result<()> {
             created_at INTEGER NOT NULL,
             last_faucet_at INTEGER NOT NULL DEFAULT 0,
             balance_zats INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
         );",
     )?;
     // Migrate pre-auth databases: bids predating the identity column.
@@ -302,6 +306,24 @@ pub fn init(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_bids_user ON bids(user_pubkey)",
         [],
+    )?;
+    Ok(())
+}
+
+/// Per-network key/value settings (e.g. `auctioneer_ua`). One `settings`
+/// table per network database keeps profiles isolated.
+pub fn get_setting(conn: &Connection, key: &str) -> rusqlite::Result<Option<String>> {
+    conn.query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| {
+        r.get(0)
+    })
+    .optional()
+}
+
+pub fn set_setting(conn: &Connection, key: &str, value: &str) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
     )?;
     Ok(())
 }
@@ -1376,5 +1398,27 @@ mod tests {
         assert_eq!(wallet_faucet_elapsed(&conn, "pk", 43).unwrap(), Some(1));
         assert!(credit_wallet(&conn, "pk", 7).unwrap());
         assert_eq!(wallet_balance(&conn, "pk").unwrap(), 7);
+    }
+
+    /// The auctioneer UA is persisted once and overwritten only on wallet
+    /// rotation — a per-boot getnewaddress would mint a new diversifier
+    /// every deploy.
+    #[test]
+    fn settings_roundtrip() {
+        let conn = Connection::open_in_memory().unwrap();
+        init(&conn).unwrap();
+
+        assert_eq!(get_setting(&conn, "auctioneer_ua").unwrap(), None);
+        set_setting(&conn, "auctioneer_ua", "uregtest1abc").unwrap();
+        assert_eq!(
+            get_setting(&conn, "auctioneer_ua").unwrap().as_deref(),
+            Some("uregtest1abc")
+        );
+        // Overwrite on wallet rotation (stored UA failed z_validateaddress).
+        set_setting(&conn, "auctioneer_ua", "uregtest1xyz").unwrap();
+        assert_eq!(
+            get_setting(&conn, "auctioneer_ua").unwrap().as_deref(),
+            Some("uregtest1xyz")
+        );
     }
 }

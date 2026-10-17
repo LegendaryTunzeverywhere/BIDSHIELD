@@ -45,7 +45,16 @@ export default defineRailway(() => {
     deploy: { restartPolicyType: "ALWAYS" },
   });
 
-  // Escrow wallet: fresh mnemonic generated on first boot, kept on a volume.
+  // Escrow wallet: seed deliberately NOT in this file (this repo is pushed to
+  // GitHub). Set it once on this service — Railway dashboard → auctioneer →
+  // Variables → ZECD_MNEMONIC, or:
+  //   railway variable set ZECD_MNEMONIC="<phrase>" --service auctioneer
+  // Keep the same value as ZECD_MNEMONIC in the repo's gitignored .env (used
+  // by e2e/spike.mjs locally). Phrase: the public BIP-39 "legal winner" test
+  // vector (regtest material). On a fresh volume the entrypoint restores it
+  // (and refuses to create a random wallet if the variable is missing); the
+  // auctioneer UA is additionally persisted in the api database per network
+  // and reused across redeploys (validated with z_validateaddress).
   const auctioneer = service("auctioneer", {
     source: src(),
     build: {
@@ -55,14 +64,18 @@ export default defineRailway(() => {
     },
     replicas: { iad: 1 },
     networking: { privateNetworkEndpoint: "auctioneer" },
-    variables: { ZECD_ROLE: { value: "auctioneer" } },
+    variables: {
+      ZECD_ROLE: { value: "auctioneer" },
+    },
     volumeMounts: { "auctioneer-data": { mountPath: "/var/lib/zecd" } },
     deploy: { restartPolicyType: "ALWAYS" },
   });
 
-  // Bring-up job: mines the regtest chain to the funder's miner address,
-  // shields mature coinbase, then waits for the api. Exits nonzero on failure;
-  // Railway restarts it = retry.
+  // Bring-up + refill job: mines the regtest chain to the funder's miner
+  // address, shields mature coinbase, waits for the api, then keeps the
+  // faucet reserve topped up forever (re-mines + re-shields whenever the
+  // funder's shielded balance drops under FUNDER_TARGET_ZATS). Exits nonzero
+  // on bring-up failure; Railway restarts it = retry.
   const bootstrap = service("bootstrap", {
     source: src(),
     build: {
@@ -71,6 +84,12 @@ export default defineRailway(() => {
       dockerfilePath: "docker/railway/bootstrap.Dockerfile",
     },
     replicas: { iad: 1 },
+    variables: {
+      // Keep ≥ 100 ZEC of shielded reserve (200 faucet claims of 0.5 ZEC).
+      FUNDER_TARGET_ZATS: { value: "10000000000" },
+      // Blocks per top-up round; the first (TOPUP_BLOCKS-100) mature.
+      TOPUP_BLOCKS: { value: "120" },
+    },
     deploy: { restartPolicyType: "ALWAYS" },
   });
 
@@ -104,9 +123,11 @@ export default defineRailway(() => {
       MINER_INTERVAL_SECS: { value: "1" },
       DB_PATH: { value: "/data/bidshield.db" },
       COOKIE_SECURE: { value: "1" },
-      // Split frontend: set to the Vercel SPA origin (https://<app>.vercel.app)
-      // once it exists; empty = same-origin only.
-      CORS_ORIGIN: { value: "" },
+      // Split frontend: the api must accept the Vercel origin — proxied
+      // /api/* requests still carry Origin: <vercel> vs Host: <railway>, and
+      // the server-side origin check 401s without this. Keep it here (not the
+      // dashboard): this file's variables win on every apply.
+      CORS_ORIGIN: { value: "https://bidshield-demo.vercel.app" },
       SYNC_PROGRESS_MIN: { value: "0.9999" },
     },
     volumeMounts: { "api-data": { mountPath: "/data" } },
@@ -123,7 +144,6 @@ export default defineRailway(() => {
   const auctioneerData = volume("auctioneer-data", { sizeMB: 500 });
 
   return project("ingenious-dream", {
-    variables: { managed: true },
     resources: [
       zebra,
       funder,
