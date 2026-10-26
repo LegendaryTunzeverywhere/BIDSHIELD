@@ -15,10 +15,12 @@ RUN --mount=type=cache,target=/src/target \
     cargo build --release --bin api && cp target/release/api /usr/local/bin/bidshield-api
 
 FROM alpine:3.22
-RUN adduser -D -u 10001 app && mkdir -p /data && chown app /data
+# Runs as root so a volume mounted at /data stays writable — volumes are
+# owned by root, and a non-root USER cannot create the SQLite database there.
+# Same reasoning as docker/railway/zecd.Dockerfile.
+RUN mkdir -p /data
 COPY --from=api /usr/local/bin/bidshield-api /usr/local/bin/bidshield-api
 COPY --from=web /src/web/dist /app/web/dist
-USER app
 ENV BIND=0.0.0.0:8080 \
     DB_PATH=/data/bidshield.db \
     WEB_DIST=/app/web/dist \
