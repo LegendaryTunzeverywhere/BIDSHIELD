@@ -1086,11 +1086,12 @@ pub struct Health {
     /// must never let this fall below `wallet_ledger_zats`.
     ///
     /// `0` here is ambiguous on its own — it also reads as "funder broke" —
-    /// so `funder_ready` disambiguates: false means the RPC never answered.
+    /// so `funder_ready` disambiguates: false means the wallet is not ready.
     pub funder_shielded_zats: i64,
-    /// Whether the funder's RPC answered this request at all. False means the
-    /// wallet is unreachable (still booting, or gone), which is a different
-    /// problem from a reachable wallet that happens to hold nothing.
+    /// Whether the funder's own `/readyz` reports it synced and spendable.
+    /// A wallet whose sync has HALTED (unrecoverable reorg after a chain
+    /// rollback) keeps answering RPC with frozen balances, so reachability
+    /// of `list_unspent` is not readiness — only `/readyz` is.
     pub funder_ready: bool,
     pub auctioneer_ua: String,
     pub network: String,
@@ -1115,11 +1116,21 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<Health> {
         let db = net.db();
         db::total_wallet_balances(&db).unwrap_or(0)
     };
-    // `ready` tracks whether the RPC answered at all, not whether it holds
-    // anything: a wallet that is still booting and one that is empty both
-    // report zero notes, and only the first is a transient condition.
-    let (funder_ready, funder_shielded_zats) = match net.funder() {
-        Ok(funder) => match funder.list_unspent().await {
+    // `ready` is the funder's own `/readyz`, not "did list_unspent answer".
+    // A wallet whose sync has HALTED (unrecoverable reorg after a chain
+    // rollback) keeps serving RPC with frozen balances, so a reachable
+    // `list_unspent` is not readiness — gate the balance read on `/readyz`.
+    let funder = net.funder().ok();
+    let funder_zready = match &funder {
+        Some(f) => f.ready().await,
+        None => false,
+    };
+    let (funder_ready, funder_shielded_zats) = match (funder, funder_zready) {
+        (Some(_), false) => {
+            tracing::warn!("funder /readyz reports not ready (syncing, halted, or down)");
+            (false, 0)
+        }
+        (Some(f), true) => match f.list_unspent().await {
             Ok(notes) => (
                 true,
                 notes
@@ -1144,7 +1155,7 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<Health> {
             }
         },
         // No funder configured for this network.
-        Err(_) => (false, 0),
+        (None, _) => (false, 0),
     };
     Json(Health {
         ok: wallet_ready,

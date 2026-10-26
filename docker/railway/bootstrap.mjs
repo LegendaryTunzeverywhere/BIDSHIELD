@@ -108,17 +108,60 @@ async function funderShieldedZats() {
     .reduce((n, u) => n + Math.round(Number(u.amount) * 1e8), 0);
 }
 
+// z_shieldcoinbase builds its transaction from the *wallet's* view of the
+// chain, and stamps an expiry height derived from the wallet tip. If the
+// wallet lags zebra, that expiry can already be in the past by the time the
+// tx reaches zebra ("must not be mined at Height(376) greater than its
+// expiry Height(329)"), and coinbase-maturity checks misfire. So every
+// shield attempt is gated on the wallet having caught up to the tip.
+async function funderHeight() {
+  return Number(await funderRpc('getblockcount', [], 10000));
+}
+
+async function waitFunderSynced(zebraTip, timeoutMs = 300000) {
+  // Allow the wallet to trail the tip by a block or two (it scans after the
+  // block is mined); a larger gap means it has not caught up.
+  const maxLag = 2;
+  await waitUntil(async () => {
+    const fh = await funderHeight();
+    if (zebraTip - fh > maxLag) {
+      throw new Error(`funder wallet height ${fh} lags zebra ${zebraTip}`);
+    }
+    const r = await fetch(FUNDER_HEALTH, { signal: AbortSignal.timeout(3000) });
+    if (!r.ok) {
+      const body = await r.text().catch(() => '');
+      throw new Error(`funder /readyz HTTP ${r.status} ${body.slice(0, 160)}`);
+    }
+  }, 'funder wallet synced to zebra tip', timeoutMs, 2000);
+}
+
+// Errors that a little more chain progress + a re-sync will clear. Anything
+// else (auth, bad address, daemon gone) is not worth retrying in a loop.
+function isTransientShieldErr(msg) {
+  const m = String(msg).toLowerCase();
+  return (
+    m.includes('immature') ||
+    m.includes('expiry') ||
+    m.includes('expired') ||
+    m.includes('must not be mined') ||
+    m.includes('no connected peer') ||
+    m.includes('request timed out')
+  );
+}
+
 // Shield every mature transparent coinbase on the funder into its own wallet.
 async function shieldAllCoinbase() {
   // Shield destination must be a shielded receiver; the default address kind
   // is a unified address with shielded pools (a transparent t-addr is
   // rejected: "coinbase funds must be shielded when spent").
+  const tip = Number(await zebraRpc('getblockcount', [], 15000));
+  await waitFunderSynced(tip);
   const ua = await funderRpc('getnewaddress', []);
-  const res = await funderRpc('z_shieldcoinbase', ['*', ua, null, 10]);
+  const res = await funderRpc('z_shieldcoinbase', ['*', ua, null, 10], 60000);
   if (!res.opid) throw new Error(`z_shieldcoinbase: ${JSON.stringify(res)}`);
   if (!(res.shieldingUTXOs > 0)) {
     log(`bootstrap: nothing mature to shield (utxos=${res.shieldingUTXOs})`);
-    return;
+    return false;
   }
   log(`bootstrap: shield opid ${res.opid} (${res.shieldingUTXOs} utxos)`);
   const deadline = Date.now() + 300000;
@@ -127,14 +170,35 @@ async function shieldAllCoinbase() {
     if (Array.isArray(entries) && entries.length > 0) {
       const e = entries[0];
       if (e.status !== 'success') {
-        throw new Error(`shield operation ${e.status}: ${JSON.stringify(e.error ?? e)}`);
+        const msg = `shield operation ${e.status}: ${JSON.stringify(e.error ?? e)}`;
+        if (isTransientShieldErr(msg)) throw new TransientShieldError(msg);
+        throw new Error(msg);
       }
       log(`bootstrap: shield tx ${e.result?.txid}`);
-      return;
+      return true;
     }
     await sleep(1000);
   }
-  throw new Error(`shield op ${res.opid} did not finish in 5 minutes`);
+  throw new TransientShieldError(`shield op ${res.opid} did not finish in 5 minutes`);
+}
+
+class TransientShieldError extends Error {}
+
+
+// Shield once, retrying the transient failures a stale wallet tip produces
+// (immature-coinbase, born-expired tx). Each retry mines a few more blocks so
+// the wallet has a fresh tip to build against, then re-syncs before retrying.
+async function shieldWithRetry(label) {
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      return await shieldAllCoinbase();
+    } catch (e) {
+      if (!(e instanceof TransientShieldError) || attempt === 5) throw e;
+      log(`${label}: shield attempt ${attempt}/5 failed transiently (${e.message}); mining 5 blocks and retrying`);
+      await mine(5);
+    }
+  }
+  return false;
 }
 
 // Mine + shield until the funder's shielded reserve covers the target.
@@ -150,7 +214,14 @@ async function ensureFunded(label) {
         `mining ${TOPUP_BLOCKS} blocks to the funder miner`,
     );
     await mine(TOPUP_BLOCKS);
-    await shieldAllCoinbase();
+    const shielded = await shieldWithRetry(label);
+    if (!shielded) {
+      // Nothing mature yet — mine more so the next round has spendable
+      // coinbase instead of waiting on a reserve that cannot grow.
+      log(`${label}: nothing shielded this round; mining 10 more blocks`);
+      await mine(10);
+      continue;
+    }
     // Depth for the new shield tx, then let the wallet scan it in.
     await mine(2);
     await waitUntil(
