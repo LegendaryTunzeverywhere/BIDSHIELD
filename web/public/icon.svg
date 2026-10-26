@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Bidshield">
+  <rect width="512" height="512" rx="96" fill="#15171a"/>
+  <rect x="72" y="72" width="368" height="368" rx="36" fill="#1b1e22" stroke="#343a42" stroke-width="10"/>
+  <rect x="108" y="108" width="296" height="136" rx="14" fill="#31363e"/>
+  <rect x="108" y="268" width="296" height="136" rx="14" fill="#31363e"/>
+  <rect x="108" y="250" width="296" height="12" fill="#0e1013"/>
+  <text x="256" y="221" text-anchor="middle" font-family="'IBM Plex Mono','Courier New',monospace" font-size="132" font-weight="700" fill="#ffb000">B</text>
+  <text x="256" y="381" text-anchor="middle" font-family="'IBM Plex Mono','Courier New',monospace" font-size="132" font-weight="700" fill="#eceae4">S</text>
+</svg>

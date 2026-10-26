@@ -16,6 +16,7 @@ import { useSession } from '../session';
 export default function Board() {
   const { ready } = useSession();
   const [auctions, setAuctions] = useState<Auction[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
@@ -30,6 +31,8 @@ export default function Board() {
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
     }
   }, []);
 
@@ -59,6 +62,7 @@ export default function Board() {
     );
   });
   const usedCategories = [...new Set(auctions.map((a) => a.category))];
+  const booting = !!error && /boot|waking|starting|503|unavailable/i.test(error);
 
   return (
     <>
@@ -99,7 +103,28 @@ export default function Board() {
         />
       )}
 
-      {error && <div className="error-line">Board unreachable: {error}</div>}
+      {error && (
+        <div className={`board-error panel${booting ? ' booting' : ''}`} role="alert">
+          <div>
+            <strong>{booting ? 'Waking the shielded stack' : 'Board unreachable'}</strong>
+            <p className="page-sub">
+              {booting
+                ? 'The demo chain starts on demand. This can take a minute on the first load; the board will refresh itself.'
+                : error}
+            </p>
+          </div>
+          <button
+            type="button"
+            className="btn btn-small"
+            onClick={() => {
+              if (auctions.length === 0) setLoading(true);
+              void refresh();
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       <div className="board-search" role="search">
         <label className="sr-only" htmlFor="board-search-input">
@@ -156,7 +181,19 @@ export default function Board() {
           <span role="columnheader">Status</span>
           <span role="columnheader">Gate</span>
         </div>
-        {filtered.length === 0 && !error && (
+        {loading && (
+          <div className="board-skeleton" aria-hidden="true">
+            {[0, 1, 2, 3].map((i) => (
+              <div className="skeleton-row" key={i}>
+                <span className="skeleton-bar skeleton-title" />
+                <span className="skeleton-bar skeleton-cell" />
+                <span className="skeleton-bar skeleton-cell" />
+                <span className="skeleton-bar skeleton-cell" />
+              </div>
+            ))}
+          </div>
+        )}
+        {!loading && filtered.length === 0 && !error && (
           <div className="empty-board">
             <strong>{q ? 'No matching lots' : 'Board empty'}</strong>
             {q
@@ -164,7 +201,7 @@ export default function Board() {
               : 'Open the counter and list the first lot — the chain is warm.'}
           </div>
         )}
-        {filtered.map((a, i) => (
+        {!loading && filtered.map((a, i) => (
           <Link
             key={a.id}
             to={`/auctions/${a.id}`}

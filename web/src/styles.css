@@ -1970,3 +1970,344 @@ button {
     height: 44px;
   }
 }
+
+/* ---- Mobile app shell: bottom nav, boot/retry states, skeletons ---- */
+:root {
+  color-scheme: dark;
+}
+
+.skip-link {
+  position: fixed;
+  top: calc(8px + env(safe-area-inset-top, 0px));
+  left: calc(8px + env(safe-area-inset-left, 0px));
+  z-index: 100;
+  transform: translateY(-180%);
+  padding: 10px 14px;
+  background: var(--amber);
+  color: #14161a;
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: transform 120ms ease;
+}
+
+.skip-link:focus {
+  transform: none;
+}
+
+.conn-banner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 12px;
+  margin: 14px 0 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 176, 0, 0.32);
+  background: rgba(255, 176, 0, 0.055);
+  color: var(--ink-dim);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.conn-banner:not(.booting) {
+  border-color: rgba(229, 86, 74, 0.38);
+  background: rgba(229, 86, 74, 0.055);
+}
+
+.conn-copy {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.conn-dot {
+  width: 9px;
+  height: 9px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--amber);
+  box-shadow: 0 0 0 3px rgba(255, 176, 0, 0.13);
+  animation: connPulse 1.6s ease-in-out infinite;
+}
+
+.conn-banner:not(.booting) .conn-dot {
+  background: var(--red);
+  box-shadow: 0 0 0 3px rgba(229, 86, 74, 0.13);
+  animation: none;
+}
+
+.conn-banner .btn {
+  margin-left: auto;
+}
+
+@keyframes connPulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border: 2px solid var(--line);
+  border-top-color: var(--amber);
+  border-radius: 50%;
+  animation: spin 800ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.board-error {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 16px;
+  border-color: rgba(229, 86, 74, 0.35);
+  background: rgba(229, 86, 74, 0.05);
+}
+
+.board-error.booting {
+  border-color: rgba(255, 176, 0, 0.35);
+  background: rgba(255, 176, 0, 0.05);
+}
+
+.board-error strong {
+  font-size: 15px;
+}
+
+.board-error .page-sub {
+  margin: 4px 0 0;
+  font-size: 13px;
+}
+
+.board-error .btn {
+  flex: 0 0 auto;
+}
+
+.load-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 28px 0;
+}
+
+.load-panel strong {
+  display: block;
+  font-size: 16px;
+}
+
+.load-panel .page-sub {
+  margin: 6px 0 0;
+  font-size: 13px;
+}
+
+.load-panel .btn {
+  flex: 0 0 auto;
+}
+
+.board-skeleton {
+  display: block;
+}
+
+.skeleton-row {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) 1.2fr 1.1fr 1.2fr;
+  gap: 16px;
+  align-items: center;
+  padding: 18px;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.skeleton-row:last-child {
+  border-bottom: none;
+}
+
+.skeleton-bar {
+  display: block;
+  height: 12px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #262b31 0%, #333a42 50%, #262b31 100%);
+  background-size: 200% 100%;
+  animation: skeletonSweep 1.5s ease-in-out infinite;
+}
+
+.skeleton-title {
+  width: 72%;
+  height: 18px;
+}
+
+.skeleton-cell {
+  width: 58%;
+}
+
+@keyframes skeletonSweep {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.bottom-nav {
+  display: none;
+}
+
+@media (max-width: 860px) {
+  /* The 5-link header row becomes a thumb-reachable bottom bar. */
+  .header {
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+  }
+
+  .nav {
+    display: none;
+  }
+
+  .header-inner {
+    flex-wrap: nowrap;
+    gap: 10px;
+  }
+
+  .wordmark {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-size: 18px;
+  }
+
+  .net-switch {
+    margin-left: auto;
+    flex: 0 0 auto;
+  }
+
+  .chain-badge {
+    width: auto;
+    margin-left: 0;
+    order: initial;
+    padding: 8px 10px;
+    font-size: 10px;
+  }
+
+  .signin-wrap {
+    width: auto;
+    align-items: flex-end;
+    flex: 0 0 auto;
+  }
+
+  .bottom-nav {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    padding-top: 4px;
+    padding-right: max(6px, env(safe-area-inset-right, 0px));
+    padding-bottom: calc(4px + env(safe-area-inset-bottom, 0px));
+    padding-left: max(6px, env(safe-area-inset-left, 0px));
+    background: rgba(19, 21, 24, 0.97);
+    border-top: 1px solid var(--line);
+    backdrop-filter: blur(10px);
+  }
+
+  .bottom-nav a {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    min-height: 54px;
+    padding: 5px 2px;
+    border-radius: 7px;
+    color: var(--ink-faint);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .bottom-nav a:hover {
+    color: var(--ink-dim);
+  }
+
+  .bottom-nav a.active {
+    color: var(--amber);
+    background: rgba(255, 176, 0, 0.08);
+  }
+
+  .bottom-nav svg {
+    width: 21px;
+    height: 21px;
+  }
+
+  .shell {
+    padding-bottom: calc(86px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .toast {
+    bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .board-error {
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .board-error .btn {
+    align-self: flex-start;
+  }
+
+  .skeleton-row {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 16px;
+    padding: 16px;
+  }
+
+  .skeleton-title {
+    grid-column: 1 / -1;
+    width: 65%;
+  }
+}
+
+@media (max-width: 480px) {
+  .wordmark {
+    font-size: 16px;
+  }
+
+  .header {
+    padding-left: max(12px, env(safe-area-inset-left, 0px));
+    padding-right: max(12px, env(safe-area-inset-right, 0px));
+  }
+
+  .bottom-nav a {
+    font-size: 9px;
+    letter-spacing: 0.06em;
+  }
+
+  .conn-banner {
+    font-size: 12px;
+  }
+
+  .conn-banner .btn {
+    margin-left: 0;
+  }
+}
+
+@media (min-width: 861px) {
+  .bottom-nav {
+    display: none;
+  }
+}

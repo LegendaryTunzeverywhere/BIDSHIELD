@@ -11,15 +11,21 @@ set -eu
 
 ZECD_ROLE="${ZECD_ROLE:?set ZECD_ROLE to funder or auctioneer}"
 ZECD_BIRTHDAY="${ZECD_BIRTHDAY:-2}"
-DATADIR=/var/lib/zecd
+# Defaults keep the original one-zecd-per-service Railway image working; the
+# all-in-one image sets both variables to its /data/<role> paths.
+DATADIR="${ZECD_DATADIR:-/var/lib/zecd}"
 WALLET_DIR="$DATADIR/default"
 ZEBRA_RPC="${ZEBRA_RPC:-http://zebra:18234/}"
 
-if [ "$ZECD_ROLE" = "funder" ]; then
+if [ -n "${ZECD_CONF:-}" ]; then
+  CONF="$ZECD_CONF"
+elif [ "$ZECD_ROLE" = "funder" ]; then
   CONF=/etc/zecd/zecd.funder.toml
 else
   CONF=/etc/zecd/zecd.auctioneer.toml
 fi
+
+mkdir -p "$DATADIR"
 
 # zecd init validates the birthday against the chain (z_gettreestate), so the
 # regtest chain must already contain that height. On Railway the bootstrap job
@@ -27,10 +33,17 @@ fi
 wait_for_chain() {
   i=0
   while [ "$i" -lt 900 ]; do
-    resp=$(wget -qO- \
-      --post-data='{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}' \
-      --header='Content-Type: application/json' \
-      "$ZEBRA_RPC" 2>/dev/null || true)
+    if command -v curl >/dev/null 2>&1; then
+      resp=$(curl -fsS --max-time 5 \
+        -H 'Content-Type: application/json' \
+        --data '{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}' \
+        "$ZEBRA_RPC" 2>/dev/null || true)
+    else
+      resp=$(wget -qO- \
+        --post-data='{"jsonrpc":"2.0","id":1,"method":"getblockcount","params":[]}' \
+        --header='Content-Type: application/json' \
+        "$ZEBRA_RPC" 2>/dev/null || true)
+    fi
     height=$(printf '%s' "$resp" | sed -n 's/.*"result":[[:space:]]*\([0-9][0-9]*\).*/\1/p')
     if [ -n "$height" ] && [ "$height" -ge "$ZECD_BIRTHDAY" ]; then
       echo "zebra height $height >= birthday $ZECD_BIRTHDAY"

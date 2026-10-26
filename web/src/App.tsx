@@ -1,4 +1,4 @@
-import { Component, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Component, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { api, type Health, type NetworkEntry } from './api';
 import { SessionProvider, useSession, friendlyWalletError, newMnemonic } from './session';
@@ -263,29 +263,142 @@ function NetworkSwitch({ health }: { health: Health | null }) {
   );
 }
 
+type NavIconName = 'board' | 'dashboard' | 'wallet' | 'privacy' | 'profile';
+
+const NAV_ITEMS: { to: string; label: string; icon: NavIconName; end?: boolean }[] = [
+  { to: '/', label: 'Board', icon: 'board', end: true },
+  { to: '/dashboard', label: 'Dashboard', icon: 'dashboard' },
+  { to: '/wallet', label: 'Wallet', icon: 'wallet' },
+  { to: '/privacy', label: 'Privacy', icon: 'privacy' },
+  { to: '/profile', label: 'Profile', icon: 'profile' },
+];
+
+function NavIcon({ name }: { name: NavIconName }) {
+  const common = {
+    width: 20,
+    height: 20,
+    viewBox: '0 0 24 24',
+    fill: 'none',
+    stroke: 'currentColor',
+    strokeWidth: 1.8,
+    strokeLinecap: 'round' as const,
+    strokeLinejoin: 'round' as const,
+    'aria-hidden': true,
+  };
+  if (name === 'board') {
+    return (
+      <svg {...common}>
+        <rect x="3" y="3" width="7" height="7" rx="1.2" />
+        <rect x="14" y="3" width="7" height="7" rx="1.2" />
+        <rect x="3" y="14" width="7" height="7" rx="1.2" />
+        <rect x="14" y="14" width="7" height="7" rx="1.2" />
+      </svg>
+    );
+  }
+  if (name === 'dashboard') {
+    return (
+      <svg {...common}>
+        <path d="M3 20h18" />
+        <path d="M5 20v-8M11 20V5M17 20v-6" />
+      </svg>
+    );
+  }
+  if (name === 'wallet') {
+    return (
+      <svg {...common}>
+        <rect x="3" y="6" width="18" height="13" rx="3" />
+        <path d="M3 10h18" />
+        <circle cx="17" cy="14.5" r="1" fill="currentColor" stroke="none" />
+      </svg>
+    );
+  }
+  if (name === 'privacy') {
+    return (
+      <svg {...common}>
+        <path d="M12 3 4.5 6v5.5c0 4.6 3.1 7.8 7.5 8.5 4.4-.7 7.5-3.9 7.5-8.5V6L12 3Z" />
+        <path d="m9 12 2 2 4-4" />
+      </svg>
+    );
+  }
+  return (
+    <svg {...common}>
+      <circle cx="12" cy="8" r="3.6" />
+      <path d="M4.5 21c.6-3.7 3.5-6 7.5-6s6.9 2.3 7.5 6" />
+    </svg>
+  );
+}
+
+function MobileNav() {
+  return (
+    <nav className="bottom-nav" aria-label="Primary mobile">
+      {NAV_ITEMS.map((item) => (
+        <NavLink
+          key={item.to}
+          to={item.to}
+          end={item.end}
+          className={({ isActive }) => (isActive ? 'active' : undefined)}
+        >
+          <NavIcon name={item.icon} />
+          <span>{item.label}</span>
+        </NavLink>
+      ))}
+    </nav>
+  );
+}
+
+/** Thin global strip for the sleeping demo: the gateway answers 503 while it
+ *  boots zebra + the wallets, so make that state legible instead of leaving
+ *  every page to render its own generic network error. */
+function ConnectionBanner({
+  state,
+  onRetry,
+}: {
+  state: 'booting' | 'down' | null;
+  onRetry: () => void;
+}) {
+  if (!state) return null;
+  return (
+    <div className={`conn-banner${state === 'booting' ? ' booting' : ''}`} role="status" aria-live="polite">
+      <span className="conn-dot" aria-hidden="true" />
+      <span className="conn-copy">
+        {state === 'booting'
+          ? 'Waking the shielded stack — the demo chain starts on demand. This can take a minute on first load.'
+          : 'Backend unreachable. If this is the demo, it may be waking up.'}
+      </span>
+      <button type="button" className="btn btn-small" onClick={onRetry}>
+        Retry
+      </button>
+    </div>
+  );
+}
+
 function Shell() {
   const [health, setHealth] = useState<Health | null>(null);
+  const [connection, setConnection] = useState<'booting' | 'down' | null>(null);
+
+  const poll = useCallback(async () => {
+    try {
+      const h = await api.health();
+      setHealth(h);
+      setConnection(null);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setHealth(null);
+      setConnection(/boot|waking|starting|503|unavailable/i.test(message) ? 'booting' : 'down');
+    }
+  }, []);
 
   useEffect(() => {
-    let alive = true;
-    const poll = async () => {
-      try {
-        const h = await api.health();
-        if (alive) setHealth(h);
-      } catch {
-        if (alive) setHealth(null);
-      }
-    };
-    poll();
-    const id = setInterval(poll, 15000);
-    return () => {
-      alive = false;
-      clearInterval(id);
-    };
-  }, []);
+    void poll();
+    const id = setInterval(() => void poll(), 15000);
+    return () => clearInterval(id);
+  }, [poll]);
 
   return (
     <>
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
       <header className="header">
         <div className="header-inner">
           <NavLink to="/" className="wordmark">
@@ -304,7 +417,8 @@ function Shell() {
           <SignInButton />
         </div>
       </header>
-      <main className="shell">
+      <main className="shell" id="main">
+        <ConnectionBanner state={connection} onRetry={() => void poll()} />
         <Routes>
           <Route path="/" element={<Board />} />
           <Route path="/auctions/:id" element={<Lot />} />
@@ -315,6 +429,7 @@ function Shell() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
+      <MobileNav />
     </>
   );
 }

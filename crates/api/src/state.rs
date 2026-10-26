@@ -40,6 +40,10 @@ pub struct Config {
     pub max_duration_secs: i64,
     pub session_ttl_secs: i64,
     pub cookie_secure: bool,
+    /// Trust `X-Forwarded-For` from a local reverse proxy (the all-in-one
+    /// Railway gateway). Without this every request looks like 127.0.0.1 and
+    /// rate limits become global.
+    pub trust_proxy: bool,
     /// Split frontend (e.g. a Vercel-hosted SPA): exact origin allowed
     /// cross-origin, with cookies. `None` = same-origin only (the API serves
     /// the SPA itself).
@@ -136,6 +140,7 @@ impl Config {
             max_duration_secs: env_num("MAX_DURATION_SECS", 2_592_000),
             session_ttl_secs: env_num("SESSION_TTL_SECS", 604_800),
             cookie_secure: env_num("COOKIE_SECURE", 0) == 1,
+            trust_proxy: env_num("TRUST_PROXY", 0) == 1,
             // Split frontend (e.g. a Vercel-hosted SPA): exact origin allowed
             // cross-origin with cookies. Empty = same-origin only (the API
             // serves the SPA itself).

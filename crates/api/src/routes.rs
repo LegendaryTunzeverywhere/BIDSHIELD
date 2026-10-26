@@ -234,13 +234,32 @@ async fn validate_user_address(
 // HTTP middleware: per-IP rate limiting, concurrency cap, security headers.
 // ---------------------------------------------------------------------------
 
+/// Resolve the client address. Behind the all-in-one Railway gateway every
+/// socket peer is 127.0.0.1, so TRUST_PROXY=1 makes us read the gateway's
+/// `X-Forwarded-For` instead. Only enable it when a trusted local proxy is the
+/// sole ingress; otherwise clients can spoof the header.
+fn client_ip(addr: &std::net::SocketAddr, headers: &HeaderMap, trust_proxy: bool) -> String {
+    if trust_proxy {
+        if let Some(forwarded) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+            if let Some(first) = forwarded
+                .split(',')
+                .map(str::trim)
+                .find(|part| !part.is_empty())
+            {
+                return first.to_string();
+            }
+        }
+    }
+    addr.ip().to_string()
+}
+
 pub async fn rate_limit_middleware(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<std::net::SocketAddr>,
     req: Request,
     next: axum::middleware::Next,
 ) -> Response {
-    let ip = addr.ip().to_string();
+    let ip = client_ip(&addr, req.headers(), state.cfg.trust_proxy);
     let path = req.uri().path();
     let class = if path.starts_with("/api/auth/") {
         Class::Auth
@@ -344,7 +363,7 @@ async fn auth_verify(
     Json(body): Json<AuthVerify>,
 ) -> Result<(CookieJar, Json<AuthIdentityResponse>), ApiError> {
     check_origin(&headers, state.cfg.cors_origin.as_deref())?;
-    let ip = addr.ip().to_string();
+    let ip = client_ip(&addr, &headers, state.cfg.trust_proxy);
     // Lock out IPs grinding signatures (secp256k1 recovery is CPU-heavy).
     if state.rate.auth_locked(&ip) {
         return Err(ApiError::RateLimited(

@@ -34,3 +34,14 @@ createRoot(document.getElementById('root')!).render(
     </BrowserRouter>
   </StrictMode>,
 );
+
+// App-shell cache only. The service worker never caches /api/*, so auctions,
+// bids, and sessions always come from the live gateway. updateViaCache:'none'
+// makes a deploy pick up a new sw.js immediately.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    void navigator.serviceWorker
+      .register('/sw.js', { updateViaCache: 'none' })
+      .catch(() => undefined);
+  });
+}

@@ -110,18 +110,41 @@ export default function Lot() {
   }, [lightbox, auction?.images.length]);
 
   if (error && !auction) {
+    const booting = /boot|waking|starting|503|unavailable/i.test(error);
+    const missing = /not found|404/i.test(error);
     return (
       <>
         <Link className="back-link" to="/">
           ← Board
         </Link>
-        <div className="error-line">{error}</div>
+        <div className={`load-panel panel${booting ? ' booting' : ''}`} role="alert">
+          <div>
+            <strong>
+              {booting ? 'Waking the shielded stack' : missing ? 'Lot not found' : 'Lot unreachable'}
+            </strong>
+            <p className="page-sub">
+              {booting
+                ? 'The demo chain starts on demand. This lot will load automatically when it wakes.'
+                : error}
+            </p>
+          </div>
+          {!missing && (
+            <button type="button" className="btn btn-small" onClick={() => void refresh()}>
+              Retry
+            </button>
+          )}
+        </div>
       </>
     );
   }
 
   if (!auction) {
-    return <div className="empty-board">Loading lot…</div>;
+    return (
+      <div className="load-panel panel" role="status">
+        <span className="spinner" aria-hidden="true" />
+        <span>Loading lot…</span>
+      </div>
+    );
   }
 
   const onBid = (newBidId: string) => {
