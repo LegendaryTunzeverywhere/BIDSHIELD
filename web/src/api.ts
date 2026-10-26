@@ -155,6 +155,11 @@ export interface Health {
   wallet_ledger_zats: number;
   /** Funder shielded notes backing that ledger. Must be >= wallet_ledger_zats. */
   funder_shielded_zats: number;
+  /**
+   * Whether the funder's RPC answered. False means the wallet is unreachable,
+   * which is a different problem from a reachable wallet holding nothing.
+   */
+  funder_ready: boolean;
   auctioneer_ua: string;
   network: string;
   chain: string;

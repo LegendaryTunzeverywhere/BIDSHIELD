@@ -1,6 +1,6 @@
 /* Bidshield app-shell cache. API responses are never cached: auctions, bids,
  * and sessions must always come from the live gateway. */
-const CACHE = 'bidshield-shell-v1';
+const CACHE = 'bidshield-shell-v2';
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg'];
 
 self.addEventListener('install', (event) => {
@@ -44,13 +44,18 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     caches.match(request).then((cached) => {
       if (cached) return cached;
-      return fetch(request).then((response) => {
-        if (response.ok && response.type === 'basic') {
-          const copy = response.clone();
-          void caches.open(CACHE).then((cache) => cache.put(request, copy));
-        }
-        return response;
-      });
+      return fetch(request)
+        .then((response) => {
+          if (response.ok && response.type === 'basic') {
+            const copy = response.clone();
+            void caches.open(CACHE).then((cache) => cache.put(request, copy));
+          }
+          return response;
+        })
+        // A rejected promise here would reject the one respondWith() got and
+        // surface "the promise was rejected" in the console. Fail the request
+        // cleanly instead.
+        .catch(() => Response.error());
     }),
   );
 });

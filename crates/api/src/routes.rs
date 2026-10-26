@@ -514,6 +514,21 @@ fn require_session(db: &rusqlite::Connection, jar: &CookieJar) -> Result<String,
         .ok_or_else(|| ApiError::Unauthorized("sign in required".into()))
 }
 
+/// A funder RPC that never reached the wallet is an availability problem, not
+/// a server bug: the wallet is still booting or has gone away. Answer 503 so
+/// the client falls back to its retry state instead of surfacing a raw
+/// transport string as a 500. Anything the wallet actually said (an RPC
+/// rejection, a decode failure) keeps its own status.
+fn map_funder_err(e: zecd_client::Error) -> ApiError {
+    match e {
+        zecd_client::Error::Transport(err) => {
+            tracing::warn!(error = %err, "funder rpc unreachable");
+            ApiError::Busy("the hosted wallet is not responding yet; retry in a moment".into())
+        }
+        e => ApiError::Zecd(e.to_string()),
+    }
+}
+
 /// Mint + persist the identity's hosted address if it does not exist yet.
 /// The address is created on the FUUNDER wallet, so it is never `ismine` on
 /// the auctioneer and therefore stays valid as a refund_address.
@@ -532,7 +547,7 @@ async fn ensure_wallet_address(
     let address = funder
         .get_new_address(None)
         .await
-        .map_err(|e| ApiError::Zecd(e.to_string()))?;
+        .map_err(map_funder_err)?;
     if !address.starts_with('u') {
         return Err(ApiError::Zecd(
             "funder returned a non-shielded address".into(),
@@ -560,7 +575,7 @@ async fn faucet_funding(net: &NetworkRuntime, amount_zats: i64) -> Result<String
         .funder()?
         .list_unspent()
         .await
-        .map_err(|e| ApiError::Zecd(e.to_string()))?;
+        .map_err(map_funder_err)?;
 
     let shielded: i64 = notes
         .iter()
@@ -688,7 +703,7 @@ async fn ledger_transfer(
         Err(e) => {
             let db = net.db();
             let _ = db::refund_wallet(&db, pubkey, amount_zats);
-            return Err(ApiError::Zecd(e.to_string()));
+            return Err(map_funder_err(e));
         }
     };
     match await_op(funder, &opid, 25).await {
@@ -814,7 +829,7 @@ async fn faucet_claim(
         Err(e) => {
             let db = net.db();
             let _ = db::release_wallet_faucet(&db, &pubkey);
-            return Err(ApiError::Zecd(e.to_string()));
+            return Err(map_funder_err(e));
         }
     };
     let (status, txid) = match await_op(&funder, &opid, 25).await {
@@ -1069,7 +1084,14 @@ pub struct Health {
     pub wallet_ledger_zats: i64,
     /// The funder's unspent shielded notes backing that ledger. The demo
     /// must never let this fall below `wallet_ledger_zats`.
+    ///
+    /// `0` here is ambiguous on its own — it also reads as "funder broke" —
+    /// so `funder_ready` disambiguates: false means the RPC never answered.
     pub funder_shielded_zats: i64,
+    /// Whether the funder's RPC answered this request at all. False means the
+    /// wallet is unreachable (still booting, or gone), which is a different
+    /// problem from a reachable wallet that happens to hold nothing.
+    pub funder_ready: bool,
     pub auctioneer_ua: String,
     pub network: String,
     pub chain: String,
@@ -1093,11 +1115,13 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<Health> {
         let db = net.db();
         db::total_wallet_balances(&db).unwrap_or(0)
     };
-    let funder_shielded_zats = match net.funder() {
-        Ok(funder) => funder
-            .list_unspent()
-            .await
-            .map(|notes| {
+    // `ready` tracks whether the RPC answered at all, not whether it holds
+    // anything: a wallet that is still booting and one that is empty both
+    // report zero notes, and only the first is a transient condition.
+    let (funder_ready, funder_shielded_zats) = match net.funder() {
+        Ok(funder) => match funder.list_unspent().await {
+            Ok(notes) => (
+                true,
                 notes
                     .iter()
                     // Shielded rows only, and keyed on the pool rather than
@@ -1105,10 +1129,22 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<Health> {
                     // still real backing.
                     .filter(|n| n.pool.as_deref().is_some_and(|p| p != "transparent"))
                     .map(|n| zecd_client::zats(n.amount))
-                    .sum()
-            })
-            .unwrap_or(0),
-        Err(_) => 0,
+                    .sum(),
+            ),
+            // The wallet never answered: still booting, or gone.
+            Err(e @ zecd_client::Error::Transport(_)) => {
+                tracing::warn!(error = %e, "funder rpc unreachable");
+                (false, 0)
+            }
+            // The wallet answered but the call failed — reachable, so only
+            // the balance is unknown.
+            Err(e) => {
+                tracing::warn!(error = %e, "funder list_unspent failed");
+                (true, 0)
+            }
+        },
+        // No funder configured for this network.
+        Err(_) => (false, 0),
     };
     Json(Health {
         ok: wallet_ready,
@@ -1116,6 +1152,7 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<Health> {
         wallet_balance_zats: balance,
         wallet_ledger_zats,
         funder_shielded_zats,
+        funder_ready,
         auctioneer_ua: net.auctioneer_ua(),
         network: net.name.clone(),
         chain: net.chain.clone(),

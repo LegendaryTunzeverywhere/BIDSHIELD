@@ -219,8 +219,10 @@ export default function Wallet() {
     );
   }
 
+  // Only claim solvency when the funder actually answered — 0 >= 0 would
+  // otherwise read as "backed" while the wallet is merely unreachable.
   const backed =
-    health && health.funder_shielded_zats >= health.wallet_ledger_zats
+    health && health.funder_ready && health.funder_shielded_zats >= health.wallet_ledger_zats
       ? {
           pool: zatsToZec(health.funder_shielded_zats),
           owed: zatsToZec(health.wallet_ledger_zats),
