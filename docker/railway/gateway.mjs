@@ -61,6 +61,16 @@ const log = (...a) => console.log(new Date().toISOString(), ...a);
 // the kernel OOM-killer takes whole processes (SIGKILL, no exit code), which
 // looks identical to a crash in the child logs. Report usage against the limit
 // plus the cgroup's own oom_kill counter so boot spikes are visible in logs.
+function childRssMb(child) {
+  try {
+    const st = fs.readFileSync(`/proc/${child.pid}/status`, 'utf8');
+    const m = st.match(/^VmRSS:\s+(\d+) kB$/m);
+    return m ? (Number(m[1]) / 1024).toFixed(0) : '?';
+  } catch {
+    return '-';
+  }
+}
+
 function memLine(label) {
   try {
     const cur = Number(
@@ -77,7 +87,13 @@ function memLine(label) {
       /* events file missing on cgroup v1 */
     }
     const mb = (n) => (n / 1024 / 1024).toFixed(1);
-    return `${label}: mem ${mb(cur)}MB/${max ? mb(max) : '?'}MB oom_kill=${oom}`;
+    const procs = [...children]
+      .map(([n, c]) => `${n}=${childRssMb(c)}`)
+      .join(' ');
+    return (
+      `${label}: mem ${mb(cur)}/${max ? mb(max) : '?'}MB oom_kill=${oom}` +
+      (procs ? ` rss{${procs}}` : '')
+    );
   } catch (e) {
     return `${label}: mem unavailable (${e.message})`;
   }
@@ -326,6 +342,14 @@ function startStack() {
       watch('funder', wallet('funder'), gen);
       await waitFor('funder wallet', () => fetchOk(FUNDER_HEALTH), WALLET_TIMEOUT_MS);
       log(memLine('funder up'));
+      // funder /readyz can report OK before its proving key finishes loading,
+      // so an optional settle delay (diagnostic / peak-shaving) can run here.
+      const settle = Number(process.env.AUCTIONEER_DELAY_SECS || '0');
+      if (settle > 0) {
+        log(`settling ${settle}s before auctioneer`);
+        await sleep(settle * 1000);
+        log(memLine('funder settled'));
+      }
       watch('auctioneer', wallet('auctioneer'), gen);
       await waitFor(
         'auctioneer wallet',
