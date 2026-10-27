@@ -108,33 +108,6 @@ async function funderShieldedZats() {
     .reduce((n, u) => n + Math.round(Number(u.amount) * 1e8), 0);
 }
 
-// z_shieldcoinbase builds its transaction from the *wallet's* view of the
-// chain, and stamps an expiry height derived from the wallet tip. If the
-// wallet lags zebra, that expiry can already be in the past by the time the
-// tx reaches zebra ("must not be mined at Height(376) greater than its
-// expiry Height(329)"), and coinbase-maturity checks misfire. So every
-// shield attempt is gated on the wallet having caught up to the tip.
-async function funderHeight() {
-  return Number(await funderRpc('getblockcount', [], 10000));
-}
-
-async function waitFunderSynced(zebraTip, timeoutMs = 300000) {
-  // Allow the wallet to trail the tip by a block or two (it scans after the
-  // block is mined); a larger gap means it has not caught up.
-  const maxLag = 2;
-  await waitUntil(async () => {
-    const fh = await funderHeight();
-    if (zebraTip - fh > maxLag) {
-      throw new Error(`funder wallet height ${fh} lags zebra ${zebraTip}`);
-    }
-    const r = await fetch(FUNDER_HEALTH, { signal: AbortSignal.timeout(3000) });
-    if (!r.ok) {
-      const body = await r.text().catch(() => '');
-      throw new Error(`funder /readyz HTTP ${r.status} ${body.slice(0, 160)}`);
-    }
-  }, 'funder wallet synced to zebra tip', timeoutMs, 2000);
-}
-
 // Errors that a little more chain progress + a re-sync will clear. Anything
 // else (auth, bad address, daemon gone) is not worth retrying in a loop.
 function isTransientShieldErr(msg) {
@@ -150,22 +123,39 @@ function isTransientShieldErr(msg) {
 }
 
 // Shield every mature transparent coinbase on the funder into its own wallet.
-async function shieldAllCoinbase() {
+// Readiness is detected by the shield call itself, never by comparing wallet
+// height to zebra's tip: getblockcount is the wallet's *scanned* height, which
+// trails the tip while a batch scan runs, so a lag gate can never clear (the
+// exact failure that starved the faucet). z_shieldcoinbase internally knows
+// when the view is usable — retry it every 3s until it reports actual UTXOs
+// to shield (same pattern as DERELICT's e2e bootstrap).
+async function shieldAllCoinbase(timeoutMs = 600000) {
   // Shield destination must be a shielded receiver; the default address kind
   // is a unified address with shielded pools (a transparent t-addr is
   // rejected: "coinbase funds must be shielded when spent").
-  const tip = Number(await zebraRpc('getblockcount', [], 15000));
-  await waitFunderSynced(tip);
   const ua = await funderRpc('getnewaddress', []);
-  const res = await funderRpc('z_shieldcoinbase', ['*', ua, null, 10], 60000);
-  if (!res.opid) throw new Error(`z_shieldcoinbase: ${JSON.stringify(res)}`);
-  if (!(res.shieldingUTXOs > 0)) {
-    log(`bootstrap: nothing mature to shield (utxos=${res.shieldingUTXOs})`);
-    return false;
+  const deadline = Date.now() + timeoutMs;
+  let res = null;
+  for (;;) {
+    try {
+      res = await funderRpc('z_shieldcoinbase', ['*', ua, null, 10], 60000);
+      if (res?.opid && res.shieldingUTXOs > 0) break;
+      log(`bootstrap: z_shieldcoinbase not ready yet (opid=${res?.opid ?? 'none'} utxos=${res?.shieldingUTXOs ?? 0}); retrying in 3s`);
+    } catch (e) {
+      if (Date.now() >= deadline) throw new Error(`z_shieldcoinbase: ${e.message}`);
+      log(`bootstrap: z_shieldcoinbase error (${e.message}); retrying in 3s`);
+    }
+    if (Date.now() >= deadline) {
+      // No mature coinbase after the full window — not an error; the caller
+      // mines more blocks so the next attempt has spendable coinbase.
+      log(`bootstrap: nothing mature to shield after ${Math.round(timeoutMs / 1000)}s`);
+      return false;
+    }
+    await sleep(3000);
   }
   log(`bootstrap: shield opid ${res.opid} (${res.shieldingUTXOs} utxos)`);
-  const deadline = Date.now() + 300000;
-  while (Date.now() < deadline) {
+  const opDeadline = Date.now() + 300000;
+  while (Date.now() < opDeadline) {
     const entries = await funderRpc('z_getoperationresult', [[res.opid]]);
     if (Array.isArray(entries) && entries.length > 0) {
       const e = entries[0];
