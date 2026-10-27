@@ -57,6 +57,32 @@ const AUCTIONEER_MNEMONIC =
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 
+// cgroup v2 memory telemetry: Railway caps this service at 1 GB on Hobby and
+// the kernel OOM-killer takes whole processes (SIGKILL, no exit code), which
+// looks identical to a crash in the child logs. Report usage against the limit
+// plus the cgroup's own oom_kill counter so boot spikes are visible in logs.
+function memLine(label) {
+  try {
+    const cur = Number(
+      fs.readFileSync('/sys/fs/cgroup/memory.current', 'utf8').trim(),
+    );
+    const maxRaw = fs.readFileSync('/sys/fs/cgroup/memory.max', 'utf8').trim();
+    const max = maxRaw === 'max' ? 0 : Number(maxRaw);
+    let oom = '?';
+    try {
+      const ev = fs.readFileSync('/sys/fs/cgroup/memory.events', 'utf8');
+      const m = ev.match(/^oom_kill\s+(\d+)$/m);
+      if (m) oom = m[1];
+    } catch {
+      /* events file missing on cgroup v1 */
+    }
+    const mb = (n) => (n / 1024 / 1024).toFixed(1);
+    return `${label}: mem ${mb(cur)}MB/${max ? mb(max) : '?'}MB oom_kill=${oom}`;
+  } catch (e) {
+    return `${label}: mem unavailable (${e.message})`;
+  }
+}
+
 /** @type {'stopped'|'starting'|'ready'|'stopping'|'broken'} */
 let state = 'stopped';
 let lastActivity = Date.now();
@@ -113,7 +139,7 @@ function watch(name, child, gen) {
   });
   child.on('exit', (code, signal) => {
     if (children.get(name) === child) children.delete(name);
-    log(`${name} exited (code=${code}, signal=${signal})`);
+    log(`${name} exited (code=${code}, signal=${signal})`, memLine('cgroup'));
     if (gen !== generation) return;
     if (state === 'stopping' || state === 'stopped') return;
     lastError = `${name} exited (code=${code}, signal=${signal})`;
@@ -197,12 +223,13 @@ async function waitFor(label, fn, timeoutMs) {
     if (state === 'broken') throw new Error(lastError || `${label} failed`);
     try {
       if (await fn()) {
-        log(`ready: ${label}`);
+        log(`ready: ${label}`, memLine('cgroup'));
         return;
       }
     } catch (e) {
       last = e instanceof Error ? e.message : String(e);
     }
+    log(`waiting: ${label}`, memLine('cgroup'));
     await sleep(2000);
   }
   throw new Error(
@@ -240,13 +267,13 @@ function startStack() {
           {
             HOME: '/home/zebra',
             ZEBRA_STATE__CACHE_DIR: path.join(DATA_DIR, 'zebra'),
-            ZEBRA_RPC_ENABLE_COOKIE_AUTH: 'false',
           },
           '/home/zebra',
         ),
         gen,
       );
       await waitFor('zebra RPC', zebraReady, ZEBRA_TIMEOUT_MS);
+      log(memLine('zebra up'));
 
       watch(
         'bootstrap',
@@ -291,15 +318,21 @@ function startStack() {
           DATA_DIR,
         );
 
+      // One zecd at a time. zecd-entrypoint runs a transient init daemon on a
+      // fresh volume, and two inits (then two daemons) starting together push
+      // the 1 GB Hobby cgroup into a kernel OOM-kill (SIGKILL, no exit code —
+      // it looks like a child crash). Bring the funder all the way up first,
+      // then start the auctioneer.
       watch('funder', wallet('funder'), gen);
-      watch('auctioneer', wallet('auctioneer'), gen);
-
       await waitFor('funder wallet', () => fetchOk(FUNDER_HEALTH), WALLET_TIMEOUT_MS);
+      log(memLine('funder up'));
+      watch('auctioneer', wallet('auctioneer'), gen);
       await waitFor(
         'auctioneer wallet',
         () => fetchOk(AUCTIONEER_HEALTH),
         WALLET_TIMEOUT_MS,
       );
+      log(memLine('auctioneer up'));
 
       watch(
         'api',
@@ -311,11 +344,11 @@ function startStack() {
       if (gen !== generation) return;
       state = 'ready';
       lastActivity = Date.now();
-      log('stack ready');
+      log('stack ready', memLine('cgroup'));
     } catch (e) {
       lastError = e instanceof Error ? e.message : String(e);
       lastFailureAt = Date.now();
-      log(`start failed: ${lastError}`);
+      log(`start failed: ${lastError}`, memLine('cgroup'));
       await stopStack('start failed');
       throw e;
     } finally {
