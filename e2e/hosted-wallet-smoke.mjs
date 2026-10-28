@@ -8,7 +8,7 @@ const require = createRequire(new URL('../web/package.json', import.meta.url));
 const { secp256k1 } = require('@noble/curves/secp256k1');
 const { sha256 } = require('@noble/hashes/sha256');
 
-const BASE = 'http://127.0.0.1:8080';
+const BASE = process.env.API_BASE || 'http://127.0.0.1:8080';
 const sha256d = (b) => sha256(sha256(b));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

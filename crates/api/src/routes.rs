@@ -2517,6 +2517,20 @@ fn revert_settling(net: &NetworkRuntime, id: &str) {
     }
 }
 
+/// Human-readable reason carried by a terminal zecd operation, so failure
+/// logs say *why* the opid died instead of only that it did.
+fn op_error_detail(err: Option<&zecd_client::OpError>) -> String {
+    match err {
+        Some(e) => match (&e.code, &e.message) {
+            (Some(c), Some(m)) => format!("code {c}: {m}"),
+            (Some(c), None) => format!("code {c}"),
+            (None, Some(m)) => m.clone(),
+            (None, None) => "zecd gave no error detail".into(),
+        },
+        None => "zecd gave no error detail".into(),
+    }
+}
+
 async fn settle_auction(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -2614,11 +2628,23 @@ async fn settle_auction(
             let db = net.db();
             db::set_settlement_opid(&db, &id, &opid)?;
         }
+        tracing::info!(
+            auction = %id,
+            opid = %opid,
+            outputs = outputs.len(),
+            "settlement batch submitted"
+        );
         match settle_exec::wait_for_op(&net.zecd, &opid, 180).await {
             Ok(txid) => Some(txid),
             Err(e) => {
                 // Do NOT revert: the operation may still be live on zecd.
                 // Recovery observes the opid and finalizes or reverts later.
+                tracing::warn!(
+                    auction = %id,
+                    opid = %opid,
+                    error = %e,
+                    "settlement not confirmed synchronously; recovery will finalize or revert"
+                );
                 return Err(ApiError::Busy(format!(
                     "settlement submitted (opid {opid}) but not yet confirmed: {e}; it will finalize automatically"
                 )));
@@ -2627,6 +2653,13 @@ async fn settle_auction(
     };
 
     finalize_settlement(&state, &net, &id, &settlement, settlement_txid.as_deref())?;
+    tracing::info!(
+        auction = %id,
+        txid = settlement_txid.as_deref().unwrap_or("none"),
+        sold = settlement.sold,
+        price_zats = settlement.price_zats,
+        "settlement finalized"
+    );
 
     Ok(Json(json!({
         "settlement": settlement,
@@ -2782,6 +2815,7 @@ pub async fn recover_settling_net(state: &Arc<AppState>, net: &NetworkRuntime) {
                     tracing::warn!(
                         auction = %auction.id,
                         opid = %opid,
+                        error = %op_error_detail(entry.error.as_ref()),
                         "recovery: on-chain operation failed; reverting to closed"
                     );
                     revert_settling(net, &auction.id);
@@ -2852,6 +2886,7 @@ pub async fn recover_payouts_net(state: &Arc<AppState>, net: &NetworkRuntime) {
                     tracing::warn!(
                         auction = %auction.id,
                         opid = %opid,
+                        error = %op_error_detail(entry.error.as_ref()),
                         "payout recovery: on-chain operation failed; reverting to {target}"
                     );
                     let db = net.db();

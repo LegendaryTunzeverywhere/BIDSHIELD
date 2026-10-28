@@ -128,10 +128,11 @@ pub async fn sync_net(state: &AppState, net: &NetworkRuntime) -> Result<(), ApiE
             }
             // A confirmed buy-it-now payment ends the Vickrey round early:
             // the BIN buyer has already paid the full asking price.
-            if confirmed && b.is_buy_now {
-                if db::cas_auction_status(&db, &b.auction_id, "open", "closed")? {
-                    info!(auction = %b.auction_id, bid = %b.id, "auction closed early by buy-it-now");
-                }
+            if confirmed
+                && b.is_buy_now
+                && db::cas_auction_status(&db, &b.auction_id, "open", "closed")?
+            {
+                info!(auction = %b.auction_id, bid = %b.id, "auction closed early by buy-it-now");
             }
         } else {
             // Payments vanished (reorg / pruned history). Return the bid to
